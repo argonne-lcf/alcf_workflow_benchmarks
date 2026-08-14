@@ -1,0 +1,68 @@
+#!/bin/bash -l
+#PBS -S /bin/bash
+#PBS -N ssim_workflow_stream
+#PBS -l select=3
+#PBS -l place=scatter:group=tier0
+#PBS -l walltime=0:30:00
+#PBS -l filesystems=home:flare
+#PBS -A datascience
+#PBS -q debug-scaling
+#PBS -k doe
+#PBS -j oe
+
+cd $PBS_O_WORKDIR
+export TZ='/usr/share/zoneinfo/US/Central'
+SSIM_ENV=${SSIM_ENV:-$PWD/_ssim_env}
+DRIVER=${DRIVER:-$PWD/driver.py}
+
+echo Jobid: $PBS_JOBID
+echo Running on host `hostname`
+echo Running on nodes `cat $PBS_NODEFILE`
+NODES=$(cat $PBS_NODEFILE | wc -l)
+
+# Log directory
+JOBID=$(cut -d. -f1 <<< "$PBS_JOBID")
+LOG_DIR=logs_$JOBID
+mkdir -p $LOG_DIR
+echo Logs will be written to $LOG_DIR
+
+# Load modules
+module load frameworks
+module list
+source "$SSIM_ENV/bin/activate"
+
+# env variables
+export MPIR_CVAR_ENABLE_GPU=0 # better for CPU only benchmark
+export MPIR_CVAR_CH4_OFI_EAGER_THRESHOLD=1000000
+export FI_MR_CACHE_MONITOR=disabled
+export FI_CXI_DEFAULT_CQ_SIZE=131072
+export FI_CXI_OFLOW_BUF_SIZE=8388608
+export FI_CXI_CQ_FILL_PERCENT=20
+
+# SmartSim env vars
+export SR_SOCKET_TIMEOUT=10000
+export SR_LOG_FILE=stdout
+export SR_LOG_LEVEL=QUIET
+
+# Run
+DEPLOYMENT=clustered
+DB_NODES=1
+COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
+
+for RANKS_PER_NODE in 1 2 8 12
+do
+  if [ "$DEPLOYMENT" = "colocated" ] && [ "$RANKS_PER_NODE" -gt "$COLOCATED_MAX_PPN" ]; then
+    echo "Skipping ppn=$RANKS_PER_NODE for colocated deployment (max is $COLOCATED_MAX_PPN)"
+    continue
+  fi
+
+  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 4294967296
+  do
+    EXP_NAME="${LOG_DIR}/ssim_${DEPLOYMENT}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
+    python $DRIVER --name $EXP_NAME \
+      --deployment $DEPLOYMENT \
+      --db_nodes $DB_NODES \
+      --ppn $RANKS_PER_NODE \
+      --producer_args $BYTES $DB_NODES
+  done
+done
