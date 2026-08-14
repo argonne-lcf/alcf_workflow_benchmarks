@@ -115,6 +115,13 @@ int main(int argc, char *argv[])
     double min_recv_time = 0.0;
     MPI_Allreduce(&local_recv_for_min, &min_recv_time, 1, MPI_DOUBLE, MPI_MIN, comm);
 
+    // Sum of per-pair rates: sum over consumers of (bytes / local recv_time)
+    double local_pair_bw = (rank >= half_size)
+        ? (static_cast<double>(bytes_per_rank) / 1e9) / recv_time
+        : 0.0;
+    double sum_of_rates = 0.0;
+    MPI_Allreduce(&local_pair_bw, &sum_of_rates, 1, MPI_DOUBLE, MPI_SUM, comm);
+
     // Print results
     if (rank == 0) {
         double gb_per_pair = static_cast<double>(bytes_per_rank) / 1e9; 
@@ -132,6 +139,7 @@ int main(int argc, char *argv[])
         std::cout << "Avg per-pair bandwidth (from send time): " << gb_per_pair / avg_send_time << " GB/s" << std::endl;
         std::cout << "Avg per-pair bandwidth (from recv time): " << gb_per_pair / avg_recv_time << " GB/s" << std::endl;
         std::cout << "Peak per-pair bandwidth (from min recv time):   " << gb_per_pair / min_recv_time << " GB/s" << std::endl;
+        std::cout << "Aggregate bandwidth (sum of per-pair rates):    " << sum_of_rates << " GB/s" << std::endl;
         std::cout << "Aggregate bandwidth (from wall-clock barriers): " << gb_per_iter / transfer_time << " GB/s" << std::endl;
     }
 

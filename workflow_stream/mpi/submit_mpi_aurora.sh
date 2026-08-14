@@ -1,7 +1,7 @@
 #!/bin/bash -l
 #PBS -S /bin/bash
 #PBS -N mpi_workflow_stream
-#PBS -l select=2
+#PBS -l select=64
 #PBS -l place=scatter:group=tier0
 #PBS -l walltime=00:30:00
 #PBS -l filesystems=home:flare
@@ -19,7 +19,8 @@ echo Running on nodes `cat $PBS_NODEFILE`
 NODES=$(cat $PBS_NODEFILE | wc -l)
 
 # Log directory
-LOG_DIR=logs_$(date +%Y%m%d_%H%M%S)
+JOBID=$(cut -d. -f1 <<< "$PBS_JOBID")
+LOG_DIR=logs_$JOBID
 mkdir -p $LOG_DIR
 echo Logs will be written to $LOG_DIR
 
@@ -38,7 +39,7 @@ export FI_CXI_CQ_FILL_PERCENT=20
 # Define bindings
 declare -A CPU_BIND_MAP
 CPU_BIND_MAP[1]="list:1"
-CPU_BIND_MAP[2]="list:1:53"
+CPU_BIND_MAP[2]="list:1:8"
 CPU_BIND_MAP[8]="list:1:8:16:24:53:60:68:76"
 CPU_BIND_MAP[12]="list:1:8:16:24:32:40:53:60:68:76:84:92"
 
@@ -52,7 +53,7 @@ do
     mpiexec -np $RANKS --ppn $RANKS_PER_NODE \
       --cpu-bind $CPU_BIND \
       numactl -m 2-3 \
-      ./wkfl_stream_mpi $BYTES 2>&1 | tee $LOG_DIR/mpi_test_n${NODES}_N${RANKS}_buff${BYTES}.log
+      ./wkfl_stream_mpi $BYTES 2>&1 | tee $LOG_DIR/mpi_n${NODES}_N${RANKS}_buff${BYTES}.log
   done
 done
 
