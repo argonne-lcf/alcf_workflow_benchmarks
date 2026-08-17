@@ -29,12 +29,6 @@ module load frameworks
 module list
 
 # env variables
-export MPIR_CVAR_ENABLE_GPU=0 # better for CPU only benchmark
-export MPIR_CVAR_CH4_OFI_EAGER_THRESHOLD=1000000
-export FI_MR_CACHE_MONITOR=disabled
-export FI_CXI_DEFAULT_CQ_SIZE=131072
-export FI_CXI_OFLOW_BUF_SIZE=8388608
-export FI_CXI_CQ_FILL_PERCENT=20
 
 # Define bindings
 declare -A CPU_BIND_MAP
@@ -53,7 +47,7 @@ do
     mpiexec -np $RANKS --ppn $RANKS_PER_NODE \
       --cpu-bind $CPU_BIND \
       numactl -m 2-3 \
-      ./wkfl_stream_mpi $BYTES 2>&1 | tee $LOG_DIR/mpi_n${NODES}_N${RANKS}_buff${BYTES}.log
+      ./wkfl_stream_mpi $BYTES 2>&1 | tee $LOG_DIR/mpi_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
   done
 done
 

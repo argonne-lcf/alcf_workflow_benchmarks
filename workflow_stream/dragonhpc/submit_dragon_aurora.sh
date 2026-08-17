@@ -32,12 +32,6 @@ module list
 source "$DRAGON_ENV/bin/activate"
 
 # env variables
-export MPIR_CVAR_ENABLE_GPU=0 # better for CPU only benchmark
-export MPIR_CVAR_CH4_OFI_EAGER_THRESHOLD=1000000
-export FI_MR_CACHE_MONITOR=disabled
-export FI_CXI_DEFAULT_CQ_SIZE=131072
-export FI_CXI_OFLOW_BUF_SIZE=8388608
-export FI_CXI_CQ_FILL_PERCENT=20
 
 # Run
 DEPLOYMENT=clustered
