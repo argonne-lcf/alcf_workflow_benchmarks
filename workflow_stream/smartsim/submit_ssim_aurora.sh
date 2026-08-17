@@ -2,7 +2,7 @@
 #PBS -S /bin/bash
 #PBS -N ssim_workflow_stream
 #PBS -l select=3
-#PBS -l place=scatter:group=tier0
+#PBS -l place=scatter:group=tier1
 #PBS -l walltime=0:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience

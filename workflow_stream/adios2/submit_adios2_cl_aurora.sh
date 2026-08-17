@@ -2,7 +2,7 @@
 #PBS -S /bin/bash
 #PBS -N adios2_workflow_stream
 #PBS -l select=2
-#PBS -l place=scatter:group=tier0
+#PBS -l place=scatter:group=tier1
 #PBS -l walltime=0:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
@@ -86,7 +86,7 @@ do
       ./producer $BYTES $ENGINE $SST_MODE $DATA_PLANE $IO_MODE \
       : -n $RANKS --ppn $RANKS_PER_NODE \
       python ./consumer.py --engine $ENGINE --sst_mode $SST_MODE --data_plane $DATA_PLANE --io_mode $IO_MODE \
-      2>&1 | tee $LOG_DIR/adios_${ENGINE}_${SST_MODE}_${DATA_PLANE}_${IO_MODE}_n${NODES}_N${RANKS}_buff${BYTES}.log
+      2>&1 | tee $LOG_DIR/adios_${ENGINE}_${SST_MODE}_${DATA_PLANE}_${IO_MODE}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
   
   cleanup_run_dir
   done

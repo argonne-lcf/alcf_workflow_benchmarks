@@ -1,8 +1,8 @@
 #!/bin/bash -l
 #PBS -S /bin/bash
 #PBS -N mpi_workflow_stream
-#PBS -l select=64
-#PBS -l place=scatter:group=tier0
+#PBS -l select=2
+#PBS -l place=scatter:group=tier1
 #PBS -l walltime=00:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
