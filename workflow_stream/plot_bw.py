@@ -50,6 +50,12 @@ ADIOS2_FNAME = re.compile(
     r"_(?P<io_mode>[a-z0-9]+)"
     r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$"
 )
+# Dragon queue pattern: dragonq_<deployment>_n{NODES}_N{RPN}_buff{B}.log
+# All output goes to stdout captured by `tee`, so single-file naming like MPI/ADIOS2.
+DRAGONQ_FNAME = re.compile(
+    r"^dragonq_(?P<deployment>[a-z]+)"
+    r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$"
+)
 # Experiment-directory pattern used by SmartSim and Dragon runs. The metadata
 # lives in the directory name; producer.out / consumer.out inside hold the
 # per-side metrics. Current format encodes both component-node count and DB
@@ -115,6 +121,20 @@ def parse_filename(name):
         return {
             "impl": base_impl,      # base name; scan_logs appends _producer / _consumer
             "engine": engine,
+            "nodes": nodes,
+            "ranks": nodes * rpn,
+            "ranks_per_node": rpn,
+            "bytes_per_rank": int(m.group("bytes")),
+        }
+    m = DRAGONQ_FNAME.match(name)
+    if m:
+        # Dragon queue: transport happens entirely on the consumer Get, so only
+        # a consumer-side summary is present in the log. Tag the record with the
+        # _consumer suffix to match the SmartSim/Dragon-DDict convention.
+        nodes = int(m.group("nodes"))
+        rpn = int(m.group("rpn"))
+        return {
+            "impl": f"dragonq_{m.group('deployment')}_consumer",
             "nodes": nodes,
             "ranks": nodes * rpn,
             "ranks_per_node": rpn,
@@ -326,11 +346,38 @@ def parse_filter(arg, all_values):
 
 
 def parse_impl_filter(arg, all_impls):
+    """Parse the --impl argument.
+
+    Records get impl names like `mpi`, `adios2_sst_async_rdma_consumer`,
+    `dragon_clustered_producer`, etc. -- with a `_producer` / `_consumer`
+    suffix on the DB-mediated/queue impls. Accept either form on the CLI:
+
+    - Exact match: `--impl adios2_sst_async_rdma_consumer` picks just that record.
+    - Base prefix: `--impl adios2_sst_async_rdma` expands to any impl that
+      starts with `adios2_sst_async_rdma` (so both `_producer` and `_consumer`
+      variants are included when they exist).
+
+    Returns (expanded_impl_list, explicit_flag).
+    """
     if arg is None:
         return None, False
     if arg == "all":
         return sorted(all_impls), False
-    return [p.strip() for p in arg.split(",") if p.strip()], True
+
+    tokens = [p.strip() for p in arg.split(",") if p.strip()]
+    expanded = set()
+    for t in tokens:
+        if t in all_impls:
+            expanded.add(t)
+            continue
+        # Prefix match against known impls; hits things like "<t>_producer" / "<t>_consumer".
+        matches = [i for i in all_impls if i == t or i.startswith(t + "_")]
+        if matches:
+            expanded.update(matches)
+        else:
+            print(f"WARN: --impl token '{t}' matched no known implementations. "
+                  f"Available: {sorted(all_impls)}", file=sys.stderr)
+    return sorted(expanded), True
 
 
 def apply_filter(records, key, values):
@@ -395,12 +442,15 @@ def plot_series(ax, records, x_key, metric, impls, impl_style, nic_bw):
         ax.plot(xs, ys, marker="o", color=color, linestyle=linestyle, label=impl)
 
     if nic_bw is not None:
-        ax.axhline(nic_bw, color="k", linewidth=1, label=f"NIC BW ({nic_bw:g} GB/s)")
+        # NIC BW label includes the per-panel value so a single figure-level legend
+        # is still ambiguous if panels have different NIC ceilings. We handle that
+        # in make_plots by drawing an in-panel note instead of listing it in the
+        # legend; here we just draw the line unlabeled.
+        ax.axhline(nic_bw, color="k", linewidth=1)
 
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.grid(True, which="both", alpha=0.3)
-    ax.legend(fontsize=8, loc="best")
 
 
 def build_impl_style(impls):
@@ -511,6 +561,26 @@ def make_plots(records, args, filters):
         else:
             ax.set_xlabel("Number of Nodes")
         ax.set_ylabel(bw_ylabel(args.metric))
+        # NIC BW annotation: label the horizontal line in-panel so a single
+        # figure-level legend can stay ambiguity-free across panels.
+        if panel_nic is not None:
+            ax.text(0.99, panel_nic, f"NIC BW = {panel_nic:g} GB/s",
+                    transform=ax.get_yaxis_transform(),
+                    ha="right", va="bottom", fontsize=7, color="k")
+
+    # Single figure-level legend, placed to the right of the subplots so it
+    # never overlaps data. Union the handles across all panels so we get every
+    # impl even when one panel is missing some.
+    seen_labels = {}
+    for ax in axes[0]:
+        for h, l in zip(*ax.get_legend_handles_labels()):
+            seen_labels.setdefault(l, h)
+    if seen_labels:
+        fig.legend(list(seen_labels.values()), list(seen_labels.keys()),
+                   loc="center left",
+                   bbox_to_anchor=(1.0, 0.5),
+                   fontsize=8,
+                   frameon=True)
 
     fig.tight_layout()
     fig.savefig(args.output, dpi=150, bbox_inches="tight")
