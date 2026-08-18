@@ -43,16 +43,25 @@ DEPLOYMENT=clustered
 DB_NODES=1
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
 
-for RANKS_PER_NODE in 1 2 8 12
+# For clustered, DB takes DB_NODES nodes; producer + consumer share the rest.
+# For colocated, all nodes host both DB and workloads, so no DB nodes are set aside.
+if [ "$DEPLOYMENT" = "clustered" ]; then
+    COMPONENT_NODES=$(( NODES - DB_NODES ))
+else
+    COMPONENT_NODES=$NODES
+fi
+
+for RANKS_PER_NODE in 1 8 12
 do
   if [ "$DEPLOYMENT" = "colocated" ] && [ "$RANKS_PER_NODE" -gt "$COLOCATED_MAX_PPN" ]; then
     echo "Skipping ppn=$RANKS_PER_NODE for colocated deployment (max is $COLOCATED_MAX_PPN)"
     continue
   fi
 
-  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 4294967296
+  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 #1073741824 4294967296
   do
-    EXP_NAME="${LOG_DIR}/ssim_${DEPLOYMENT}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
+    # Exp name encodes component-node count (matches MPI/ADIOS2 'n') and DB nodes as 'd'.
+    EXP_NAME="${LOG_DIR}/ssim_${DEPLOYMENT}_n${COMPONENT_NODES}d${DB_NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
     python $DRIVER --name $EXP_NAME \
       --deployment $DEPLOYMENT \
       --db_nodes $DB_NODES \

@@ -2,7 +2,7 @@
 #PBS -S /bin/bash
 #PBS -N dragon_workflow_stream
 #PBS -l select=3
-#PBS -l place=scatter:group=tier1
+#PBS -l place=scatter:group=tier0
 #PBS -l walltime=0:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
@@ -36,18 +36,28 @@ source "$DRAGON_ENV/bin/activate"
 # Run
 DEPLOYMENT=clustered
 DDICT_NODES=1
-DDICT_MEM=500         # DDict memory per node in GB
+DDICT_MEM=400         # DDict memory per node in GB
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
-for RANKS_PER_NODE in 1 2 8 12
+
+# For clustered, DDict takes DDICT_NODES; producer + consumer share the rest.
+# For colocated/mixed, DDict runs on every node alongside the workloads.
+if [ "$DEPLOYMENT" = "clustered" ]; then
+    COMPONENT_NODES=$(( NODES - DDICT_NODES ))
+else
+    COMPONENT_NODES=$NODES
+fi
+
+for RANKS_PER_NODE in 1 8 12 
 do
   if [ "$DEPLOYMENT" = "colocated" ] && [ "$RANKS_PER_NODE" -gt "$COLOCATED_MAX_PPN" ]; then
     echo "Skipping ppn=$RANKS_PER_NODE for colocated deployment (max is $COLOCATED_MAX_PPN)"
     continue
   fi
 
-  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 4294967296
+  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
   do
-    EXP_NAME="dragon_${DEPLOYMENT}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
+    # Exp name encodes component-node count (matches MPI/ADIOS2 'n') and DDict nodes as 'd'.
+    EXP_NAME="dragon_${DEPLOYMENT}_n${COMPONENT_NODES}d${DDICT_NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
     dragon $DRIVER --log_dir $LOG_DIR --exp_name $EXP_NAME \
       --deployment $DEPLOYMENT \
       --bytes_per_rank $BYTES \

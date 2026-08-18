@@ -70,6 +70,7 @@ if args.engine == "bp5":
 # Open stream and read
 workflow_steps = 20
 get_time = 0.0
+transfer_time = 0.0
 completed_steps = 0
 bytes_per_rank = None
 N = None
@@ -81,7 +82,9 @@ try:
         print("[ML] Opening stream...", flush=True)
     stream = Stream(streamIO, open_path, "r", comm)
 
+    sleep_time = 2.0  # seconds; > producer sleep so producer stays ahead
     for step in range(workflow_steps):
+        sleep(sleep_time)
         status = stream.begin_step()
 
         # Discover buffer size on the first step
@@ -94,6 +97,11 @@ try:
             if rank == 0:
                 print(f"[ML] Producer sends {bytes_per_rank} bytes ({bytes_per_rank/1e9:.4f} GB) per rank", flush=True)
 
+        # Bracket the read with barriers so tic_wrap..toc_wrap is the wall-clock
+        # time for ALL ranks to finish reading (defines the transfer window for
+        # the aggregate wall-clock BW). tic..toc is still just this rank's read.
+        comm.Barrier()
+        tic_wrap = MPI.Wtime()
         tic = MPI.Wtime()
         # for SST, stream.read() gets data now, Mode.Sync is default
         # see
@@ -101,15 +109,17 @@ try:
         #   - https://github.com/ornladios/ADIOS2/blob/67f771b7a2f88ce59b6808cc4356159d86255f1d/python/adios2/engine.py#L123)
         train_data = stream.read("U", [start], [N])
         toc = MPI.Wtime()
+        comm.Barrier()
+        toc_wrap = MPI.Wtime()
 
         if step > 0:
             get_time += toc - tic
+            transfer_time += toc_wrap - tic_wrap
         completed_steps = step + 1
 
         stream.end_step()
-        comm.Barrier()
         if rank == 0:
-            print(f"[ML] Iter {step}: {toc - tic:.6f} s", flush=True)
+            print(f"[ML] Iter {step}: {toc_wrap - tic_wrap:.6f} s", flush=True)
 
 except Exception as e:
     print(f"[ML] Error on rank {rank}: {e}", flush=True)
@@ -135,6 +145,7 @@ finally:
     # Metrics (only meaningful if we timed at least one non-warmup step)
     if completed_steps > 1 and bytes_per_rank is not None:
         get_time /= (completed_steps - 1)
+        transfer_time /= (completed_steps - 1)
         avg_get_time = comm.allreduce(get_time, op=MPI.SUM) / size
         max_get_time = comm.allreduce(get_time, op=MPI.MAX)
         min_get_time = comm.allreduce(get_time, op=MPI.MIN)
@@ -154,7 +165,8 @@ finally:
             print(f"Avg per-rank get time: {avg_get_time:.6f} s")
             print(f"Min per-rank get time: {min_get_time:.6f} s (fastest rank)")
             print(f"Max per-rank get time: {max_get_time:.6f} s (slowest rank)")
+            print(f"Wall-clock transfer time (barrier-to-barrier): {transfer_time:.6f} s")
             print(f"Avg per-rank bandwidth (from get time): {gb_per_rank / avg_get_time:.6f} GB/s")
             print(f"Peak per-rank bandwidth (from min get time): {gb_per_rank / min_get_time:.6f} GB/s")
             print(f"Aggregate bandwidth (sum of per-rank rates): {sum_of_rates:.6f} GB/s")
-            print(f"Aggregate bandwidth (from max get time): {gb_per_iter / max_get_time:.6f} GB/s")
+            print(f"Aggregate bandwidth (from wall-clock barriers): {gb_per_iter / transfer_time:.6f} GB/s")
