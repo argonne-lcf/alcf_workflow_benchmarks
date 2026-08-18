@@ -1,8 +1,8 @@
 #!/bin/bash -l
 #PBS -S /bin/bash
-#PBS -N dragon_workflow_stream
-#PBS -l select=3
-#PBS -l place=scatter:group=tier0
+#PBS -N dragonq_workflow_stream
+#PBS -l select=2
+#PBS -l place=scatter:group=tier1
 #PBS -l walltime=0:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
@@ -26,39 +26,34 @@ LOG_DIR=logs_$JOBID
 mkdir -p $LOG_DIR
 echo Logs will be written to $LOG_DIR
 
-# Load modules
+# Load modules and activate venv
 module load frameworks
 module list
 source "$DRAGON_ENV/bin/activate"
 
 # env variables
-export MPIR_CVAR_ENABLE_GPU=0 # better for CPU only benchmark
-export MPIR_CVAR_CH4_OFI_EAGER_THRESHOLD=1000000
-export FI_MR_CACHE_MONITOR=disabled
-export FI_CXI_DEFAULT_CQ_SIZE=131072
-export FI_CXI_OFLOW_BUF_SIZE=8388608
-export FI_CXI_CQ_FILL_PERCENT=20
+
+# Dragon env variables
+export DRAGON_DEFAULT_SEG_SZ=$((32 * 1024**3)) # increase default pool size
 
 # Run
 DEPLOYMENT=clustered
-DDICT_NODES=1
-DDICT_MEM=500         # DDict memory per node in GB
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
-for RANKS_PER_NODE in 1 2 8 12
+
+for RANKS_PER_NODE in 1 8 12
 do
   if [ "$DEPLOYMENT" = "colocated" ] && [ "$RANKS_PER_NODE" -gt "$COLOCATED_MAX_PPN" ]; then
     echo "Skipping ppn=$RANKS_PER_NODE for colocated deployment (max is $COLOCATED_MAX_PPN)"
     continue
   fi
 
-  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 4294967296
+  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
   do
-    EXP_NAME="dragon_${DEPLOYMENT}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
-    dragon $DRIVER --log_dir $LOG_DIR --exp_name $EXP_NAME \
+    LOG_FILE=$LOG_DIR/dragonq_${DEPLOYMENT}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
+    dragon $DRIVER \
       --deployment $DEPLOYMENT \
       --bytes_per_rank $BYTES \
-      --ddict_nodes $DDICT_NODES \
-      --procs_per_node $RANKS_PER_NODE \
-      --ddict_mem_size_per_node $DDICT_MEM
+      --ppn $RANKS_PER_NODE \
+      2>&1 | tee $LOG_FILE
   done
 done

@@ -114,9 +114,11 @@ int main(int argc, char *argv[])
         adios2::IO checkIO = adios.DeclareIO("checkIO");
 
         std::string open_path;
+        int sleep_time;
         if (engine == "bp5") {
             streamIO.SetEngine("BP5");
             open_path = solution_path;
+            sleep_time = 2000;
         } else if (engine == "sst") {
             streamIO.SetEngine("SST");
             adios2::Params params;
@@ -134,6 +136,7 @@ int main(int argc, char *argv[])
             params["OpenTimeoutSecs"] = "600";
             streamIO.SetParameters(params);
             open_path = "solutionStream";
+            sleep_time = 500;
         } else {
             if (rank == 0) std::cerr << "[Sim] Unknown engine: " << engine << std::endl;
             MPI_Abort(comm, 1);
@@ -148,7 +151,6 @@ int main(int argc, char *argv[])
 
         // Setup iteration loop
         int iters = 1000;
-        int sleep_time = 2000;
         std::vector<double> U(N, 0.0);
         double put_time = 0.0, transfer_time = 0.0;
         int completed_iters = 0;
@@ -221,19 +223,36 @@ int main(int argc, char *argv[])
             if (rank == 0) {
                 double gb_per_rank = static_cast<double>(bytes_per_rank) / 1e9;
                 double gb_per_iter = gb_per_rank * size;
+                // For SST, the Put call only stages metadata -- bytes move at the consumer's
+                // Get. Reporting producer-side times/BW would be misleading, so zero them out.
+                // Only BP5 (where EndStep actually writes to disk) gets meaningful numbers.
+                bool sst = (engine == "sst");
+                double r_avg_put   = sst ? 0.0 : avg_put_time;
+                double r_min_put   = sst ? 0.0 : min_put_time;
+                double r_max_put   = sst ? 0.0 : max_put_time;
+                double r_transfer  = sst ? 0.0 : transfer_time;
+                double r_avg_bw    = sst ? 0.0 : gb_per_rank / avg_put_time;
+                double r_peak_bw   = sst ? 0.0 : gb_per_rank / min_put_time;
+                double r_sum_rates = sst ? 0.0 : sum_of_rates;
+                double r_wall_bw   = sst ? 0.0 : gb_per_iter / transfer_time;
+
                 std::cout << "\n=== Producer Performance Summary ===" << std::endl;
                 std::cout << "Producer ranks: " << size << std::endl;
                 std::cout << "Data per rank per iter: " << gb_per_rank << " GB" << std::endl;
                 std::cout << "Total data per iter: " << gb_per_iter << " GB" << std::endl;
                 std::cout << "Iterations timed: " << (completed_iters - 1) << " (iter 0 = warmup)" << std::endl;
-                std::cout << "Avg per-rank put time: " << avg_put_time << " s" << std::endl;
-                std::cout << "Min per-rank put time: " << min_put_time << " s (fastest rank)" << std::endl;
-                std::cout << "Max per-rank put time: " << max_put_time << " s (slowest rank)" << std::endl;
-                std::cout << "Wall-clock transfer time (barrier-to-barrier): " << transfer_time << " s" << std::endl;
-                std::cout << "Avg per-rank bandwidth (from put time): " << gb_per_rank / avg_put_time << " GB/s" << std::endl;
-                std::cout << "Peak per-rank bandwidth (from min put time): " << gb_per_rank / min_put_time << " GB/s" << std::endl;
-                std::cout << "Aggregate bandwidth (sum of per-rank rates):    " << sum_of_rates << " GB/s" << std::endl;
-                std::cout << "Aggregate bandwidth (from wall-clock barriers): " << gb_per_iter / transfer_time << " GB/s" << std::endl;
+                if (sst) {
+                    std::cout << "(SST engine: bytes move on consumer Get, not producer Put; "
+                              << "producer-side numbers reported as 0.)" << std::endl;
+                }
+                std::cout << "Avg per-rank put time: " << r_avg_put << " s" << std::endl;
+                std::cout << "Min per-rank put time: " << r_min_put << " s (fastest rank)" << std::endl;
+                std::cout << "Max per-rank put time: " << r_max_put << " s (slowest rank)" << std::endl;
+                std::cout << "Wall-clock transfer time (barrier-to-barrier): " << r_transfer << " s" << std::endl;
+                std::cout << "Avg per-rank bandwidth (from put time): " << r_avg_bw << " GB/s" << std::endl;
+                std::cout << "Peak per-rank bandwidth (from min put time): " << r_peak_bw << " GB/s" << std::endl;
+                std::cout << "Aggregate bandwidth (sum of per-rank rates):    " << r_sum_rates << " GB/s" << std::endl;
+                std::cout << "Aggregate bandwidth (from wall-clock barriers): " << r_wall_bw << " GB/s" << std::endl;
             }
         }
     }

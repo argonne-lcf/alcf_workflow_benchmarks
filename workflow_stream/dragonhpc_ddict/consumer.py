@@ -81,23 +81,31 @@ while True:
 # Receive training data
 workflow_steps = 20
 get_time = 0.0
+transfer_time = 0.0
 completed_steps = 0
 
 try:
     for step in range(workflow_steps):
         sleep(2)
 
+        # Bracket the read with barriers so tic_wrap..toc_wrap is the wall-clock
+        # time for ALL ranks to finish reading (defines the transfer window for
+        # the aggregate wall-clock BW). tic..toc is still just this rank's read.
+        comm.Barrier()
+        tic_wrap = MPI.Wtime()
         tic = MPI.Wtime()
         train_data = dd[f"y.{rank}"]
         toc = MPI.Wtime()
+        comm.Barrier()
+        toc_wrap = MPI.Wtime()
 
         if step > 0:
             get_time += toc - tic
+            transfer_time += toc_wrap - tic_wrap
         completed_steps = step + 1
 
-        comm.Barrier()
         if rank == 0:
-            log.info("[ML] Iter %d: %.6f s", step, toc - tic)
+            log.info("[ML] Iter %d: %.6f s", step, toc_wrap - tic_wrap)
 
         if args.verify:
             expected = np.arange(N, dtype=np.float64) + (1.0 / step if step > 0 else 0.0)
@@ -123,6 +131,7 @@ finally:
     # Metrics
     if completed_steps > 1 and bytes_per_rank is not None:
         get_time /= (completed_steps - 1)
+        transfer_time /= (completed_steps - 1)
         avg_get_time = comm.allreduce(get_time, op=MPI.SUM) / size
         max_get_time = comm.allreduce(get_time, op=MPI.MAX)
         min_get_time = comm.allreduce(get_time, op=MPI.MIN)
@@ -141,7 +150,8 @@ finally:
             log.info("Avg per-rank get time: %.6f s", avg_get_time)
             log.info("Min per-rank get time: %.6f s (fastest rank)", min_get_time)
             log.info("Max per-rank get time: %.6f s (slowest rank)", max_get_time)
+            log.info("Wall-clock transfer time (barrier-to-barrier): %.6f s", transfer_time)
             log.info("Avg per-rank bandwidth (from get time): %.6f GB/s", gb_per_rank / avg_get_time)
             log.info("Peak per-rank bandwidth (from min get time): %.6f GB/s", gb_per_rank / min_get_time)
             log.info("Aggregate bandwidth (sum of per-rank rates): %.6f GB/s", sum_of_rates)
-            log.info("Aggregate bandwidth (from max get time): %.6f GB/s", gb_per_iter / max_get_time)
+            log.info("Aggregate bandwidth (from wall-clock barriers): %.6f GB/s", gb_per_iter / transfer_time)

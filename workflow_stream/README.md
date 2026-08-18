@@ -47,7 +47,8 @@ plain MPI baseline for reference.
 | [`mpi`](./mpi) | MPI point-to-point `send`/`recv` | Baseline; considered peak achievable performance for workflow tools. |
 | [`adios2`](./adios2) | SST streaming (WAN, RDMA); BP5 file I/O to PFS, or DAOS POSIX container | Same code path with different ADIOS2 engines/back-ends. |
 | [`smartsim`](./smartsim) | Staging through a Redis in-memory database with inter-node TCP transfer | Uses SmartSim to orchestrate and SmartRedis clients to move data. |
-| [`dragonhpc`](./dragonhpc) | Streaming through `multiprocessing.Queue`; staging through the Dragon Distributed Dictionary (DDict); both over RDMA | Two data-movement modes exposed by the DragonHPC runtime. |
+| [`dragonhpc_ddict`](./dragonhpc_ddict) | Staging through the Dragon Distributed Dictionary (DDict) over RDMA | C++/Python workflow orchestrated with `dragon` using C++/Python DDict clients. |
+| [`dragonhpc_queue`](./dragonhpc_queue) | Streaming through `multiprocessing.Queue` over RDMA | Python workflow orchestrated with `dragon` and using one queue for each producer-consumer pair of ranks. |
 
 See each subdirectory's scripts for build, environment, and job-submission
 details.

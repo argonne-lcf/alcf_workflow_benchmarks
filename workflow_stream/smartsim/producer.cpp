@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
 
     // Setup iteration loop
     int iters = 1000;
-    int sleep_time = 2000;
+    int sleep_time = 500;
     std::vector<double> U(N, 0.0);
     std::string key = "y." + std::to_string(rank);
     double put_time = 0.0, transfer_time = 0.0;
