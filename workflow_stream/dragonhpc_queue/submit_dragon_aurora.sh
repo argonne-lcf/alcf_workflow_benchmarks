@@ -33,6 +33,9 @@ source "$DRAGON_ENV/bin/activate"
 
 # env variables
 
+# Dragon env variables
+export DRAGON_DEFAULT_SEG_SZ=$((32 * 1024**3)) # increase default pool size
+
 # Run
 DEPLOYMENT=clustered
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
