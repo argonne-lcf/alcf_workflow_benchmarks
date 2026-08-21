@@ -31,7 +31,8 @@ echo Logs will be written to $LOG_DIR
 
 # Load modules
 module load frameworks
-module load adios2/2.11.0-cpu
+#module load adios2/2.11.0-cpu
+module load adios2/2.11.0-sycl
 module list
 
 # Build code
@@ -54,6 +55,10 @@ export SstVerbose=0
 export OMP_PROC_BIND=spread
 export OMP_PLACES=threads
 
+# GPU-aware MPI (needed when the producer buffer lives on the GPU)
+export MPIR_CVAR_ENABLE_GPU=1
+export MPICH_GPU_SUPPORT_ENABLED=1
+
 # Clean up run dir
 cleanup_run_dir() {
     echo "Cleaning up old .sst, .bp, and sentinel files"
@@ -69,25 +74,28 @@ CPU_BIND_MAP[2]="list:1:8"
 CPU_BIND_MAP[8]="list:1:8:16:24:53:60:68:76"
 CPU_BIND_MAP[12]="list:1:8:16:24:32:40:53:60:68:76:84:92"
 
+set ulimit -c unlimited
+
 # Run
-ENGINE=sst
-SST_MODE=async
+ENGINE=bp5
+SST_MODE=sync
 DATA_PLANE=RDMA
 IO_MODE=posix
-for RANKS_PER_NODE in 1 8 12
+DEVICE=gpu # gpu/cpu
+for RANKS_PER_NODE in 1 #8 12
 do
   RANKS=$(( COMPONENT_NODES * RANKS_PER_NODE ))
   CPU_BIND=${CPU_BIND_MAP[$RANKS_PER_NODE]}
-  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
+  for BYTES in 262144 #1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
   do
     # MPMD launch
     mpiexec -n $RANKS --ppn $RANKS_PER_NODE \
       --cpu-bind $CPU_BIND numactl -m 2-3 \
-      ./producer $BYTES $ENGINE $SST_MODE $DATA_PLANE $IO_MODE \
+      ./producer $BYTES $ENGINE $SST_MODE $DATA_PLANE $IO_MODE $DEVICE \
       : -n $RANKS --ppn $RANKS_PER_NODE \
       python ./consumer.py --engine $ENGINE --sst_mode $SST_MODE --data_plane $DATA_PLANE --io_mode $IO_MODE \
-      2>&1 | tee $LOG_DIR/adios_${ENGINE}_${SST_MODE}_${DATA_PLANE}_${IO_MODE}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
-  
+      2>&1 | tee $LOG_DIR/adios_${ENGINE}_${SST_MODE}_${DATA_PLANE}_${IO_MODE}_${DEVICE}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
+
   cleanup_run_dir
   done
 done
