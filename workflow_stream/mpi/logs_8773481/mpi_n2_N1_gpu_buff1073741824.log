@@ -1,0 +1,42 @@
+Running with 2 MPI ranks and 1.07374 GB per rank
+Buffer location (producer and consumer): gpu
+
+[rank 1] SYCL device (1/12): Intel(R) Data Center GPU Max 1550
+[rank 0] SYCL device (0/12): Intel(R) Data Center GPU Max 1550
+Iteration 0: 0.181716 seconds
+Iteration 1: 0.182295 seconds
+Iteration 2: 0.181604 seconds
+Iteration 3: 0.181851 seconds
+Iteration 4: 0.181383 seconds
+Iteration 5: 0.182655 seconds
+Iteration 6: 0.181106 seconds
+Iteration 7: 0.181426 seconds
+Iteration 8: 0.180942 seconds
+Iteration 9: 0.181038 seconds
+Iteration 10: 0.183565 seconds
+Iteration 11: 0.180863 seconds
+Iteration 12: 0.181229 seconds
+Iteration 13: 0.18086 seconds
+Iteration 14: 0.180723 seconds
+Iteration 15: 0.180693 seconds
+Iteration 16: 0.180437 seconds
+Iteration 17: 0.180209 seconds
+Iteration 18: 0.180219 seconds
+Iteration 19: 0.180172 seconds
+
+=== Communication Performance Summary ===
+Buffer location (producer and consumer): gpu
+Producer/consumer pairs: 1
+Data per message (per pair): 1.07374 GB
+Total data per iteration (all pairs): 1.07374 GB
+Iterations timed: 19 (iter 0 = warmup)
+Avg per-pair send time:  0.140597 s
+Avg per-pair recv time:  0.181227 s
+Min per-pair recv time:  0.181227 s (fastest pair)
+Max per-pair recv time:  0.181227 s (slowest pair)
+Wall-clock transfer time (barrier-to-barrier): 0.181225 s
+Avg per-pair bandwidth (from send time): 7.63704 GB/s
+Avg per-pair bandwidth (from recv time): 5.92486 GB/s
+Peak per-pair bandwidth (from min recv time):   5.92486 GB/s
+Aggregate bandwidth (sum of per-pair rates):    5.92486 GB/s
+Aggregate bandwidth (from wall-clock barriers): 5.92492 GB/s

@@ -1,0 +1,7 @@
+Running with 16 MPI ranks and 0.0041943 GB per rank
+Buffer location (producer and consumer): cpu
+
+Iteration 0: 0.00246518 seconds
+Iteration 1: 0.00059151 seconds
+Iteration 2: 0.000345395 seconds
+Iteration 3: 0.000384921 seconds
