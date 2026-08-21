@@ -12,40 +12,24 @@
 #include <sycl/sycl.hpp>
 
 
-int check_run(MPI_Comm comm, adios2::IO checkIO, const std::string& check_path)
+// Poll for the consumer's quit signal using a plain filesystem sentinel. We deliberately
+// avoid ADIOS2 here to keep the SYCL-enabled ADIOS2 runtime out of the per-iteration
+// polling path, which was causing GPU page faults on the producer's USM buffer.
+int check_run(MPI_Comm comm, const std::string& check_path)
 {
-    int exit_val = 1;
-    int exists;
+    int exists = 0;
     int rank;
     MPI_Comm_rank(comm, &rank);
 
     if (rank == 0) {
         exists = std::filesystem::exists(check_path) ? 1 : 0;
         if (exists) {
-            printf("[Sim] Found check-run file!\n");
+            printf("[Sim] Found check-run sentinel: consumer says time to quit\n");
             fflush(stdout);
         }
     }
     MPI_Bcast(&exists, 1, MPI_INT, 0, comm);
-
-    if (exists) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        adios2::Engine reader = checkIO.Open(check_path, adios2::Mode::Read);
-        reader.BeginStep();
-        adios2::Variable<int> var = checkIO.InquireVariable<int>("check-run");
-        if (rank == 0 && var) {
-            reader.Get(var, &exit_val);
-        }
-        reader.EndStep();
-        reader.Close();
-        MPI_Bcast(&exit_val, 1, MPI_INT, 0, comm);
-    }
-
-    if (exit_val == 0 && rank == 0) {
-        printf("[Sim] Consumer says time to quit\n");
-        fflush(stdout);
-    }
-    return exit_val;
+    return exists ? 0 : 1;  // 0 = quit, 1 = keep going
 }
 
 
@@ -138,7 +122,7 @@ int main(int argc, char *argv[])
     }
 
     std::string path_prefix = (io_mode == "daos") ? "/tmp/datascience/balin/" : "./";
-    std::string check_path = path_prefix + "check-run.bp";
+    std::string check_path = path_prefix + "check-run.done";
     std::string solution_path = path_prefix + "solution.bp";
     std::string ready_path = path_prefix + "solution.ready";
 
@@ -146,7 +130,6 @@ int main(int argc, char *argv[])
     {
         adios2::ADIOS adios(comm);
         adios2::IO streamIO = adios.DeclareIO("solutionStream");
-        adios2::IO checkIO = adios.DeclareIO("checkIO");
 
         std::string open_path;
         int sleep_time;
@@ -210,7 +193,7 @@ int main(int argc, char *argv[])
 
         for (int iter = 0; iter < iters; iter++) {
             // Check for quit signal from consumer
-            int exit_val = check_run(comm, checkIO, check_path);
+            int exit_val = check_run(comm, check_path);
             if (exit_val == 0) break;
 
             // Emulate compute time then fill buffer
@@ -234,10 +217,6 @@ int main(int argc, char *argv[])
 
             double put_start = MPI_Wtime();
             solWriter.BeginStep();
-            // Sync mode forces ADIOS2 to consume U before Put returns, so the next
-            // iteration is free to overwrite the USM buffer. With the default Deferred
-            // mode + SST async, the transport thread can still be reading U while our
-            // kernel rewrites it, which shows up as GPU page faults ("NotPresent").
             solWriter.Put<double>(UVar, U, adios2::Mode::Sync);
             if (iter == 0 && rank == 0) {
                 solWriter.Put<long long>(bprVar, bytes_per_rank);
@@ -265,51 +244,28 @@ int main(int argc, char *argv[])
             }
             completed_iters = iter + 1;
         }
-        std::cout << "[Sim][DBG] rank " << rank << ": loop exited, completed_iters=" << completed_iters << std::endl;
-        std::cout.flush();
-
-        MPI_Barrier(comm);
-        if (rank == 0) std::cout << "[Sim][DBG] before solWriter.Close()" << std::endl;
         solWriter.Close();
-        MPI_Barrier(comm);
-        if (rank == 0) std::cout << "[Sim][DBG] after solWriter.Close()" << std::endl;
 
         // Cleanup
         if (on_gpu) {
-            if (rank == 0) std::cout << "[Sim][DBG] before sycl::free(U_gpu)" << std::endl;
             sycl::free(U_gpu, Q);
-            if (rank == 0) std::cout << "[Sim][DBG] after sycl::free(U_gpu)" << std::endl;
         }
-        MPI_Barrier(comm);
-        if (rank == 0) std::cout << "[Sim][DBG] entering metrics section (completed_iters=" << completed_iters << ")" << std::endl;
 
         // Metrics
         if (completed_iters > 1) {
             put_time /= (completed_iters - 1);
             transfer_time /= (completed_iters - 1);
-            std::cout << "[Sim][DBG] rank " << rank << ": local put_time=" << put_time
-                      << " transfer_time=" << transfer_time << std::endl;
-            std::cout.flush();
-            MPI_Barrier(comm);
 
             double avg_put_time = 0.0, max_put_time = 0.0, min_put_time = 0.0;
-            if (rank == 0) std::cout << "[Sim][DBG] before Allreduce(SUM, put_time)" << std::endl;
             MPI_Allreduce(&put_time, &avg_put_time, 1, MPI_DOUBLE, MPI_SUM, comm);
-            if (rank == 0) std::cout << "[Sim][DBG] after  Allreduce(SUM, put_time)" << std::endl;
             avg_put_time /= size;
-            if (rank == 0) std::cout << "[Sim][DBG] before Allreduce(MAX, put_time)" << std::endl;
             MPI_Allreduce(&put_time, &max_put_time, 1, MPI_DOUBLE, MPI_MAX, comm);
-            if (rank == 0) std::cout << "[Sim][DBG] after  Allreduce(MAX, put_time)" << std::endl;
-            if (rank == 0) std::cout << "[Sim][DBG] before Allreduce(MIN, put_time)" << std::endl;
             MPI_Allreduce(&put_time, &min_put_time, 1, MPI_DOUBLE, MPI_MIN, comm);
-            if (rank == 0) std::cout << "[Sim][DBG] after  Allreduce(MIN, put_time)" << std::endl;
 
             // Sum of per-rank rates
             double local_rank_bw = (static_cast<double>(bytes_per_rank) / 1e9) / put_time;
             double sum_of_rates = 0.0;
-            if (rank == 0) std::cout << "[Sim][DBG] before Allreduce(SUM, local_rank_bw)" << std::endl;
             MPI_Allreduce(&local_rank_bw, &sum_of_rates, 1, MPI_DOUBLE, MPI_SUM, comm);
-            if (rank == 0) std::cout << "[Sim][DBG] after  Allreduce(SUM, local_rank_bw)" << std::endl;
 
             if (rank == 0) {
                 double gb_per_rank = static_cast<double>(bytes_per_rank) / 1e9;
@@ -346,8 +302,6 @@ int main(int argc, char *argv[])
                 std::cout << "Aggregate bandwidth (from wall-clock barriers): " << r_wall_bw << " GB/s" << std::endl;
             }
         }
-        MPI_Barrier(comm);
-        if (rank == 0) std::cout << "[Sim][DBG] finished metrics section, exiting try block" << std::endl;
     }
     catch (std::invalid_argument &e)
     {
@@ -362,8 +316,6 @@ int main(int argc, char *argv[])
         std::cout << "[Sim] Exception, STOPPING from rank " << rank << ": " << e.what() << std::endl;
     }
 
-    if (rank == 0) std::cout << "[Sim][DBG] before MPI_Finalize" << std::endl;
     MPI_Finalize();
-    if (rank == 0) std::cout << "[Sim][DBG] after MPI_Finalize (returning)" << std::endl;
     return 0;
 }

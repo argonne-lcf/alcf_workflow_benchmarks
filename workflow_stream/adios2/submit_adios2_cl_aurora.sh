@@ -39,6 +39,8 @@ module list
 ./configAurora.sh
 
 # env variables
+export MPIR_CVAR_ENABLE_GPU=1
+export MPICH_GPU_SUPPORT_ENABLED=1
 
 # ADIOS2 env vars
 # auto-locate the Python site-packages under the loaded adios2 module
@@ -55,14 +57,10 @@ export SstVerbose=0
 export OMP_PROC_BIND=spread
 export OMP_PLACES=threads
 
-# GPU-aware MPI (needed when the producer buffer lives on the GPU)
-export MPIR_CVAR_ENABLE_GPU=1
-export MPICH_GPU_SUPPORT_ENABLED=1
-
 # Clean up run dir
 cleanup_run_dir() {
     echo "Cleaning up old .sst, .bp, and sentinel files"
-    rm -rf ./*.sst ./*.bp ./*.ready 2>/dev/null
+    rm -rf ./*.sst ./*.bp ./*.ready ./*.done 2>/dev/null
     return 0
 }
 cleanup_run_dir
@@ -74,19 +72,17 @@ CPU_BIND_MAP[2]="list:1:8"
 CPU_BIND_MAP[8]="list:1:8:16:24:53:60:68:76"
 CPU_BIND_MAP[12]="list:1:8:16:24:32:40:53:60:68:76:84:92"
 
-set ulimit -c unlimited
-
 # Run
-ENGINE=bp5
+ENGINE=sst
 SST_MODE=sync
 DATA_PLANE=RDMA
 IO_MODE=posix
 DEVICE=gpu # gpu/cpu
-for RANKS_PER_NODE in 1 #8 12
+for RANKS_PER_NODE in 1 8 12
 do
   RANKS=$(( COMPONENT_NODES * RANKS_PER_NODE ))
   CPU_BIND=${CPU_BIND_MAP[$RANKS_PER_NODE]}
-  for BYTES in 262144 #1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
+  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
   do
     # MPMD launch
     mpiexec -n $RANKS --ppn $RANKS_PER_NODE \
