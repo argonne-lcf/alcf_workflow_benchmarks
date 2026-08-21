@@ -54,3 +54,21 @@ See each subdirectory's scripts for build, environment, and job-submission
 details.
 
 **Note:** The current implementation of the benchmarks is designed to run on CPUs only. A GPU-enabled versoin of the benchmark to test GPU-direct data transfer will be provided soon.
+
+## Results
+
+### Minimal Clustered Runs on Aurora
+
+The following results show the performance of the workflow tools in their minimal configuration for a clustered run. For streaming and staging through the parallel file system, this means 2 nodes, for in-memory staging, this means 3 nodes where one node is dedicated to the staging component (e.g., Redis DB or Dragon DDict).
+
+<p align="center">
+  <img src="./utils/bw_plot_adios2.png" alt="ADIOS2 BP5 and SST streaming" width="600"/>
+</p>
+
+<p align="center">
+  <img src="./utils/bw_plot_ssim.png" alt="SmartSim/SmartRedis staging" width="700"/>
+</p>
+
+<p align="center">
+  <img src="./utils/bw_plot_dragon_queue.png" alt="Dragon streaming and staging" width="700"/>
+</p>
