@@ -9,42 +9,27 @@
 
 #include "adios2.h"
 #include <mpi.h>
+#include <sycl/sycl.hpp>
 
 
-int check_run(MPI_Comm comm, adios2::IO checkIO, const std::string& check_path)
+// Poll for the consumer's quit signal using a plain filesystem sentinel. We deliberately
+// avoid ADIOS2 here to keep the SYCL-enabled ADIOS2 runtime out of the per-iteration
+// polling path, which was causing GPU page faults on the producer's USM buffer.
+int check_run(MPI_Comm comm, const std::string& check_path)
 {
-    int exit_val = 1;
-    int exists;
+    int exists = 0;
     int rank;
     MPI_Comm_rank(comm, &rank);
 
     if (rank == 0) {
         exists = std::filesystem::exists(check_path) ? 1 : 0;
         if (exists) {
-            printf("[Sim] Found check-run file!\n");
+            printf("[Sim] Found check-run sentinel: consumer says time to quit\n");
             fflush(stdout);
         }
     }
     MPI_Bcast(&exists, 1, MPI_INT, 0, comm);
-
-    if (exists) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        adios2::Engine reader = checkIO.Open(check_path, adios2::Mode::Read);
-        reader.BeginStep();
-        adios2::Variable<int> var = checkIO.InquireVariable<int>("check-run");
-        if (rank == 0 && var) {
-            reader.Get(var, &exit_val);
-        }
-        reader.EndStep();
-        reader.Close();
-        MPI_Bcast(&exit_val, 1, MPI_INT, 0, comm);
-    }
-
-    if (exit_val == 0 && rank == 0) {
-        printf("[Sim] Consumer says time to quit\n");
-        fflush(stdout);
-    }
-    return exit_val;
+    return exists ? 0 : 1;  // 0 = quit, 1 = keep going
 }
 
 
@@ -66,11 +51,13 @@ int main(int argc, char *argv[])
     MPI_Comm_size(comm, &size);
 
     // Parse args
-    if (argc != 6) {
+    if (argc < 6 || argc > 7) {
         if (rank == 0) {
             std::cerr << "[Sim] Usage: " << argv[0]
                       << " <bytes_per_rank> <engine:bp5|sst> <sst_mode:sync|async>"
-                      << " <data_plane:WAN|MPI|UCX|RDMA|fabric> <io_mode:posix|daos>" << std::endl;
+                      << " <data_plane:WAN|MPI|UCX|RDMA|fabric> <io_mode:posix|daos>"
+                      << " [device:gpu|cpu]" << std::endl;
+            std::cerr << "[Sim]   device defaults to gpu" << std::endl;
         }
         MPI_Finalize();
         return -1;
@@ -80,6 +67,14 @@ int main(int argc, char *argv[])
     std::string sst_mode = argv[3];
     std::string data_plane = argv[4];
     std::string io_mode = argv[5];
+    std::string device = (argc == 7) ? std::string(argv[6]) : std::string("gpu");
+    if (device != "gpu" && device != "cpu") {
+        if (rank == 0) {
+            std::cerr << "[Sim] device must be 'gpu' or 'cpu', got '" << device << "'" << std::endl;
+        }
+        MPI_Abort(comm, 1);
+    }
+    bool on_gpu = (device == "gpu");
 
     if (bytes_per_rank % sizeof(double) != 0) {
         if (rank == 0) {
@@ -99,11 +94,35 @@ int main(int argc, char *argv[])
         if (engine == "sst") {
             std::cout << " sst_mode=" << sst_mode << " data_plane=" << data_plane;
         }
-        std::cout << " io_mode=" << io_mode << ")" << std::endl;
+        std::cout << " io_mode=" << io_mode << " device=" << device << ")" << std::endl;
+    }
+
+    // SYCL queue is only used when buffers live on the GPU
+    // Round-robin across the local node's GPUs
+    sycl::queue Q;
+    if (on_gpu) {
+        std::vector<sycl::device> gpu_devices;
+        for (const auto& plat : sycl::platform::get_platforms()) {
+            if (plat.get_backend() != sycl::backend::ext_oneapi_level_zero) continue;
+            for (const auto& dev : plat.get_devices()) {
+                if (dev.is_gpu()) {
+                    gpu_devices.push_back(dev);
+                }
+            }
+        }
+        if (gpu_devices.empty()) {
+            std::cerr << "[Sim] [rank " << rank << "] No Level Zero GPU devices found!" << std::endl;
+            MPI_Abort(comm, 1);
+        }
+        int local_idx = rank % static_cast<int>(gpu_devices.size());
+        Q = sycl::queue(gpu_devices[local_idx]);
+        std::cout << "[Sim] [rank " << rank << "] SYCL device (" << local_idx
+                  << "/" << gpu_devices.size() << "): "
+                  << Q.get_device().get_info<sycl::info::device::name>() << std::endl;
     }
 
     std::string path_prefix = (io_mode == "daos") ? "/tmp/datascience/balin/" : "./";
-    std::string check_path = path_prefix + "check-run.bp";
+    std::string check_path = path_prefix + "check-run.done";
     std::string solution_path = path_prefix + "solution.bp";
     std::string ready_path = path_prefix + "solution.ready";
 
@@ -111,7 +130,6 @@ int main(int argc, char *argv[])
     {
         adios2::ADIOS adios(comm);
         adios2::IO streamIO = adios.DeclareIO("solutionStream");
-        adios2::IO checkIO = adios.DeclareIO("checkIO");
 
         std::string open_path;
         int sleep_time;
@@ -149,9 +167,24 @@ int main(int argc, char *argv[])
         auto UVar = streamIO.DefineVariable<double>("U", {_global_N}, {_offset_N}, {_N});
         auto bprVar = streamIO.DefineVariable<long long>("bytes_per_rank");
 
-        // Setup iteration loop
+        // Tell ADIOS2 the memory space of the buffer we'll hand to Put
+        if (on_gpu) {
+            UVar.SetMemorySpace(adios2::MemorySpace::GPU);
+        }
+
+        // Setup iteration loop. 
         int iters = 1000;
-        std::vector<double> U(N, 0.0);
+        std::vector<double> U_host;
+        double *U_gpu = nullptr;
+        double *U = nullptr;
+        if (on_gpu) {
+            U_gpu = sycl::malloc_device<double>(N, Q);
+            Q.memset(U_gpu, 0, N * sizeof(double)).wait();
+            U = U_gpu;
+        } else {
+            U_host.assign(N, 0.0);
+            U = U_host.data();
+        }
         double put_time = 0.0, transfer_time = 0.0;
         int completed_iters = 0;
 
@@ -160,14 +193,23 @@ int main(int argc, char *argv[])
 
         for (int iter = 0; iter < iters; iter++) {
             // Check for quit signal from consumer
-            int exit_val = check_run(comm, checkIO, check_path);
+            int exit_val = check_run(comm, check_path);
             if (exit_val == 0) break;
 
             // Emulate compute time then fill buffer
             std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
             double frac = (iter != 0) ? (1.0 / iter) : 0.0;
-            for (long long n = 0; n < N; n++) {
-                U[n] = static_cast<double>(n + frac);
+            if (on_gpu) {
+                double *U_ptr = U;
+                long long N_local = N;
+                Q.parallel_for(sycl::range<1>(N_local), [=](sycl::id<1> idx) {
+                    long long n = static_cast<long long>(idx[0]);
+                    U_ptr[n] = static_cast<double>(n) + frac;
+                }).wait();
+            } else {
+                for (long long n = 0; n < N; n++) {
+                    U[n] = static_cast<double>(n) + frac;
+                }
             }
 
             MPI_Barrier(comm);
@@ -175,7 +217,7 @@ int main(int argc, char *argv[])
 
             double put_start = MPI_Wtime();
             solWriter.BeginStep();
-            solWriter.Put<double>(UVar, U.data());
+            solWriter.Put<double>(UVar, U, adios2::Mode::Sync);
             if (iter == 0 && rank == 0) {
                 solWriter.Put<long long>(bprVar, bytes_per_rank);
             }
@@ -203,6 +245,11 @@ int main(int argc, char *argv[])
             completed_iters = iter + 1;
         }
         solWriter.Close();
+
+        // Cleanup
+        if (on_gpu) {
+            sycl::free(U_gpu, Q);
+        }
 
         // Metrics
         if (completed_iters > 1) {

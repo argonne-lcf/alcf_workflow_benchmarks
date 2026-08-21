@@ -31,13 +31,16 @@ echo Logs will be written to $LOG_DIR
 
 # Load modules
 module load frameworks
-module load adios2/2.11.0-cpu
+#module load adios2/2.11.0-cpu
+module load adios2/2.11.0-sycl
 module list
 
 # Build code
 ./configAurora.sh
 
 # env variables
+export MPIR_CVAR_ENABLE_GPU=1
+export MPICH_GPU_SUPPORT_ENABLED=1
 
 # ADIOS2 env vars
 # auto-locate the Python site-packages under the loaded adios2 module
@@ -57,7 +60,7 @@ export OMP_PLACES=threads
 # Clean up run dir
 cleanup_run_dir() {
     echo "Cleaning up old .sst, .bp, and sentinel files"
-    rm -rf ./*.sst ./*.bp ./*.ready 2>/dev/null
+    rm -rf ./*.sst ./*.bp ./*.ready ./*.done 2>/dev/null
     return 0
 }
 cleanup_run_dir
@@ -71,9 +74,10 @@ CPU_BIND_MAP[12]="list:1:8:16:24:32:40:53:60:68:76:84:92"
 
 # Run
 ENGINE=sst
-SST_MODE=async
+SST_MODE=sync
 DATA_PLANE=RDMA
 IO_MODE=posix
+DEVICE=gpu # gpu/cpu
 for RANKS_PER_NODE in 1 8 12
 do
   RANKS=$(( COMPONENT_NODES * RANKS_PER_NODE ))
@@ -83,11 +87,11 @@ do
     # MPMD launch
     mpiexec -n $RANKS --ppn $RANKS_PER_NODE \
       --cpu-bind $CPU_BIND numactl -m 2-3 \
-      ./producer $BYTES $ENGINE $SST_MODE $DATA_PLANE $IO_MODE \
+      ./producer $BYTES $ENGINE $SST_MODE $DATA_PLANE $IO_MODE $DEVICE \
       : -n $RANKS --ppn $RANKS_PER_NODE \
       python ./consumer.py --engine $ENGINE --sst_mode $SST_MODE --data_plane $DATA_PLANE --io_mode $IO_MODE \
-      2>&1 | tee $LOG_DIR/adios_${ENGINE}_${SST_MODE}_${DATA_PLANE}_${IO_MODE}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
-  
+      2>&1 | tee $LOG_DIR/adios_${ENGINE}_${SST_MODE}_${DATA_PLANE}_${IO_MODE}_${DEVICE}_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
+
   cleanup_run_dir
   done
 done

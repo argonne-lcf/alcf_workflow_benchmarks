@@ -1,0 +1,7 @@
+# Env and venvs
+*venv/
+*env/
+
+# SmartSim/SmartRedis build artifacts
+SmartSim/
+SmartRedis/

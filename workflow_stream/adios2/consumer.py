@@ -41,7 +41,7 @@ if rank == 0:
 path_prefix = "/tmp/datascience/balin/" if args.io_mode == "daos" else "./"
 solution_path = path_prefix + "solution.bp"
 ready_path = path_prefix + "solution.ready"
-check_path = path_prefix + "check-run.bp"
+check_path = path_prefix + "check-run.done"
 
 # ADIOS setup
 adios = Adios(comm)
@@ -133,14 +133,13 @@ finally:
 
     # Always signal producer to quit, even if the read loop threw
     try:
-        with Stream(check_path, 'w', comm) as check_stream:
-            if rank == 0:
-                check_stream.write("check-run", np.int32([0]))
-        comm.Barrier()
         if rank == 0:
-            print("[ML] Wrote check-run signal", flush=True)
+            with open(check_path, "w") as f:
+                f.write("done\n")
+            print(f"[ML] Wrote check-run sentinel {check_path}", flush=True)
+        comm.Barrier()
     except Exception as e:
-        print(f"[ML] Warning: failed to write check-run on rank {rank}: {e}", flush=True)
+        print(f"[ML] Warning: failed to write check-run sentinel on rank {rank}: {e}", flush=True)
 
     # Metrics (only meaningful if we timed at least one non-warmup step)
     if completed_steps > 1 and bytes_per_rank is not None:

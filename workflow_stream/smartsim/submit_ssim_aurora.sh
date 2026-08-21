@@ -41,6 +41,7 @@ export SR_LOG_LEVEL=QUIET
 # Run
 DEPLOYMENT=clustered
 DB_NODES=1
+DEVICE="gpu" # gpu/cpu 
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
 
 # For clustered, DB takes DB_NODES nodes; producer + consumer share the rest.
@@ -61,11 +62,11 @@ do
   for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 #1073741824 4294967296
   do
     # Exp name encodes component-node count (matches MPI/ADIOS2 'n') and DB nodes as 'd'.
-    EXP_NAME="${LOG_DIR}/ssim_${DEPLOYMENT}_n${COMPONENT_NODES}d${DB_NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
+    EXP_NAME="${LOG_DIR}/ssim_${DEPLOYMENT}_n${COMPONENT_NODES}d${DB_NODES}_${DEVICE}_N${RANKS_PER_NODE}_buff${BYTES}"
     python $DRIVER --name $EXP_NAME \
       --deployment $DEPLOYMENT \
       --db_nodes $DB_NODES \
       --ppn $RANKS_PER_NODE \
-      --producer_args $BYTES $DB_NODES
+      --producer_args $BYTES $DB_NODES $DEVICE
   done
 done
