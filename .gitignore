@@ -5,3 +5,18 @@
 # SmartSim/SmartRedis build artifacts
 SmartSim/
 SmartRedis/
+
+# DragonHPC artifacts
+ddict_orc*
+
+# Stream workflow artifacts
+producer
+logs_[0-9]*/
+
+# PBS job logs
+*.o[0-9]*
+*.e[0-9]*
+
+# Other artifacts
+__pycache__/
+

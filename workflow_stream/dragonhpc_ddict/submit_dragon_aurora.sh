@@ -10,7 +10,7 @@
 #PBS -k doe
 #PBS -j oe
 
-cd $PBS_O_WORKDIR
+#cd $PBS_O_WORKDIR
 export TZ='/usr/share/zoneinfo/US/Central'
 DRAGON_ENV=${DRAGON_ENV:-$PWD/_dragon_env}
 DRIVER=${DRIVER:-$PWD/driver.py}
@@ -37,6 +37,7 @@ source "$DRAGON_ENV/bin/activate"
 DEPLOYMENT=clustered
 DDICT_NODES=1
 DDICT_MEM=400         # DDict memory per node in GB
+DEVICE="gpu"          # gpu/cpu (producer buffer location)
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
 
 # For clustered, DDict takes DDICT_NODES; producer + consumer share the rest.
@@ -47,22 +48,23 @@ else
     COMPONENT_NODES=$NODES
 fi
 
-for RANKS_PER_NODE in 1 8 12 
+for RANKS_PER_NODE in 12 #1 8 12 
 do
   if [ "$DEPLOYMENT" = "colocated" ] && [ "$RANKS_PER_NODE" -gt "$COLOCATED_MAX_PPN" ]; then
     echo "Skipping ppn=$RANKS_PER_NODE for colocated deployment (max is $COLOCATED_MAX_PPN)"
     continue
   fi
 
-  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
+  for BYTES in 262144 #1048576 4194304 16777216 67108864 268435456 1073741824 #4294967296
   do
     # Exp name encodes component-node count (matches MPI/ADIOS2 'n') and DDict nodes as 'd'.
-    EXP_NAME="dragon_${DEPLOYMENT}_n${COMPONENT_NODES}d${DDICT_NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
+    EXP_NAME="dragon_${DEPLOYMENT}_n${COMPONENT_NODES}d${DDICT_NODES}_${DEVICE}_N${RANKS_PER_NODE}_buff${BYTES}"
     dragon $DRIVER --log_dir $LOG_DIR --exp_name $EXP_NAME \
       --deployment $DEPLOYMENT \
       --bytes_per_rank $BYTES \
       --ddict_nodes $DDICT_NODES \
       --procs_per_node $RANKS_PER_NODE \
-      --ddict_mem_size_per_node $DDICT_MEM
+      --ddict_mem_size_per_node $DDICT_MEM \
+      --device $DEVICE
   done
 done

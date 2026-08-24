@@ -34,9 +34,9 @@ if [ -z "$DRAGON_ROOT" ] || [ ! -d "$DRAGON_ROOT" ]; then
 fi
 echo "Using DRAGON_ROOT=$DRAGON_ROOT"
 
-# Build producer.cpp
+# Build producer.cpp 
 # _GLIBCXX_USE_CXX11_ABI=0 resolves an ABI conflict with the Dragon wheel's prebuilt library.
-mpicxx -O3 -std=c++17 \
+mpicxx -O3 -std=c++17 -fsycl \
   -D_GLIBCXX_USE_CXX11_ABI=0 \
   -I"$DRAGON_ROOT/include" \
   producer.cpp cpp_serializers.cpp \

@@ -128,7 +128,7 @@ def launch_workflow(args: argparse.Namespace, dd_serialized: str, ddict_nodelist
     # Producer (C++)
     print('Launching the producer...', flush=True)
     producer_exe = "./producer"
-    producer_args_list = [f"{args.deployment}", f"{args.bytes_per_rank}", f"{dd_serialized}"]
+    producer_args_list = [f"{args.deployment}", f"{args.bytes_per_rank}", f"{dd_serialized}", f"{args.device}"]
     producer_env = {**os.environ, "PRODUCER_LOG": producer_log}
     producer_cpu_bind = [1,8,16,24,32,40,53,60,68,76,84,92]
     producer_proc = mp.Process(
@@ -187,6 +187,7 @@ def main():
     parser.add_argument("--ddict_mem_size_per_node", type=float, default=100, help="Memory size per node for the DDict (in GB)")
     parser.add_argument("--managers_per_node", type=int, default=4, help="Number of managers per node for the DDict")
     parser.add_argument("--procs_per_node", type=int, default=12, help="Number of processes per node for the producer and consumer")
+    parser.add_argument("--device", type=str, default="gpu", choices=["gpu", "cpu"], help="Producer buffer location (D->H staging is timed as part of the put on gpu)")
     parser.add_argument("--log_dir", type=str, default=".", help="Parent directory for per-experiment log directories")
     parser.add_argument("--exp_name", type=str, default="dragon_exp", help="Experiment name; a subdirectory of --log_dir will be created for it")
     args = parser.parse_args()

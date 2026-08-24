@@ -15,6 +15,7 @@
 #include <dragon/serializable.hpp>
 #include "cpp_serializers.hpp"
 #include <mpi.h>
+#include <sycl/sycl.hpp>
 
 // Default DDict operation timeout
 static timespec_t TIMEOUT = {600, 0};
@@ -121,8 +122,10 @@ int main(int argc, char *argv[])
     // Parse positional args, then optional flags
     if (argc < 4) {
         if (rank == 0) {
-            log_line("[Sim] Usage: %s <deployment> <bytes_per_rank> <serialized_ddict> [--verbose]",
+            log_line("[Sim] Usage: %s <deployment> <bytes_per_rank> <serialized_ddict> [device:gpu|cpu] [--verbose]",
                      argv[0]);
+            log_line("[Sim]   device defaults to gpu; DDict put always sends from a host buffer,"
+                     " so the D->H copy is timed as part of the put.");
         }
         log_close();
         MPI_Finalize();
@@ -131,13 +134,17 @@ int main(int argc, char *argv[])
     std::string deployment = argv[1];
     long long bytes_per_rank = std::stoll(argv[2]);
     const char *ddict_ser = argv[3];
+    std::string device = "gpu";
     for (int i = 4; i < argc; i++) {
         if (std::strcmp(argv[i], "--verbose") == 0) {
             g_debug_enabled = true;
+        } else if (std::strcmp(argv[i], "gpu") == 0 || std::strcmp(argv[i], "cpu") == 0) {
+            device = argv[i];
         } else if (rank == 0) {
             log_line("[Sim] Unknown flag '%s'; ignoring", argv[i]);
         }
     }
+    bool on_gpu = (device == "gpu");
 
     if (bytes_per_rank % sizeof(double) != 0) {
         if (rank == 0) {
@@ -152,9 +159,33 @@ int main(int argc, char *argv[])
     if (rank == 0) {
         char hostname[256];
         gethostname(hostname, sizeof(hostname));
-        log_line("[Sim] Running on %s with %d MPI ranks and %g GB per rank (deployment=%s)",
-                 hostname, size, static_cast<double>(bytes_per_rank) / 1e9, deployment.c_str());
+        log_line("[Sim] Running on %s with %d MPI ranks and %g GB per rank (deployment=%s device=%s)",
+                 hostname, size, static_cast<double>(bytes_per_rank) / 1e9, deployment.c_str(), device.c_str());
         if (g_debug_enabled) log_line("[Sim] Debug logging enabled");
+    }
+
+    // SYCL queue is only used when the producer buffer lives on the GPU.
+    // Round-robin across the GPUs 
+    sycl::queue Q;
+    if (on_gpu) {
+        std::vector<sycl::device> gpu_devices;
+        for (const auto& plat : sycl::platform::get_platforms()) {
+            if (plat.get_backend() != sycl::backend::ext_oneapi_level_zero) continue;
+            for (const auto& dev : plat.get_devices()) {
+                if (dev.is_gpu()) {
+                    gpu_devices.push_back(dev);
+                }
+            }
+        }
+        if (gpu_devices.empty()) {
+            log_line("[Sim] No Level Zero GPU devices found!");
+            log_close();
+            MPI_Abort(comm, 1);
+        }
+        int local_idx = rank % static_cast<int>(gpu_devices.size());
+        Q = sycl::queue(gpu_devices[local_idx]);
+        log_line("[Sim] SYCL device (%d/%zu): %s", local_idx, gpu_devices.size(),
+                 Q.get_device().get_info<sycl::info::device::name>().c_str());
     }
 
     // Attach to the Distributed Dictionary created on the Python side
@@ -168,9 +199,15 @@ int main(int argc, char *argv[])
     }
 
     // Setup iteration loop
+    // DDict put always reads from host memory (the serializer copies out of a std::vector)
     int iters = 1000;
     int sleep_time = 500;
-    std::vector<double> U(N, 0.0);
+    std::vector<double> U_host(N, 0.0);
+    double *U_gpu = nullptr;
+    if (on_gpu) {
+        U_gpu = sycl::malloc_device<double>(N, Q);
+        Q.memset(U_gpu, 0, N * sizeof(double)).wait();
+    }
     dragon::SerializableString U_key("y." + std::to_string(rank));
     double put_time = 0.0, transfer_time = 0.0;
     int completed_iters = 0;
@@ -179,18 +216,30 @@ int main(int argc, char *argv[])
         int exit_val = check_run(comm, &dd);
         if (exit_val == 0) break;
 
-        // Emulate compute time then fill buffer
+        // Emulate compute time then fill buffer (on the chosen device)
         std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
         double frac = (iter != 0) ? (1.0 / iter) : 0.0;
-        for (long long n = 0; n < N; n++) {
-            U[n] = static_cast<double>(n + frac);
+        if (on_gpu) {
+            double *U_ptr = U_gpu;
+            long long N_local = N;
+            Q.parallel_for(sycl::range<1>(N_local), [=](sycl::id<1> idx) {
+                long long n = static_cast<long long>(idx[0]);
+                U_ptr[n] = static_cast<double>(n) + frac;
+            }).wait();
+        } else {
+            for (long long n = 0; n < N; n++) {
+                U_host[n] = static_cast<double>(n) + frac;
+            }
         }
 
         MPI_Barrier(comm);
         double tic = MPI_Wtime();
 
         double put_start = MPI_Wtime();
-        custom::SerializableDoubleVector U_value(U);
+        if (on_gpu) {
+            Q.memcpy(U_host.data(), U_gpu, N * sizeof(double)).wait();
+        }
+        custom::SerializableDoubleVector U_value(U_host);
         dd[U_key] = U_value;
         double put_end = MPI_Wtime();
         if (iter > 0) put_time += put_end - put_start;
@@ -203,6 +252,11 @@ int main(int argc, char *argv[])
             log_line("[Sim] Iter %d: %.6f s", iter, toc - tic);
         }
         completed_iters = iter + 1;
+    }
+
+    // Cleanup
+    if (on_gpu) {
+        sycl::free(U_gpu, Q);
     }
 
     // Metrics
