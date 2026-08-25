@@ -69,6 +69,8 @@ Using CPU buffers in the producer.
   <img src="./utils/bw_plot_min_cpu.png" alt="ADIOS2 BP5 and SST streaming" width="900"/>
 </p>
 
+Using GPU buffers in the producer.
+
 <p align="center">
   <img src="./utils/bw_plot_min_gpu.png" alt="ADIOS2 BP5 and SST streaming" width="900"/>
 </p>
