@@ -230,6 +230,7 @@ def main():
         n_nodes=ddict_nodes, 
         total_mem=total_mem_size, 
         policy=dd_policy, 
+        streams_per_manager=0,
         timeout=3600
     )
     print(f"Launched the Dragon Dictionary on {ddict_nodes} nodes \n", flush=True)

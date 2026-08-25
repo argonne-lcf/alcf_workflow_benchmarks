@@ -35,34 +35,47 @@ import matplotlib.pyplot as plt
 
 # ---------- log parsing ----------
 
+# All patterns accept an optional `_(gpu|cpu)` tag inserted just before `_buff...`
+# by the submit scripts once producer buffer location became configurable. Older
+# logs without the tag still parse; the `device` field is None in that case.
+#
 # Current MPI pattern: N is ranks-per-node.
 # Legacy (mpi_test_...) had N as total ranks; still parsed for backward compatibility.
-MPI_FNAME = re.compile(r"^mpi_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$")
+MPI_FNAME = re.compile(
+    r"^mpi_n(?P<nodes>\d+)_N(?P<rpn>\d+)"
+    r"(?:_(?P<device>gpu|cpu))?"
+    r"_buff(?P<bytes>\d+)\.log$"
+)
 MPI_FNAME_LEGACY = re.compile(r"^mpi_test_n(?P<nodes>\d+)_N(?P<ranks>\d+)_buff(?P<bytes>\d+)\.log$")
-# Current adios2 pattern: adios[2]_<engine>_<sst_mode>_<data_plane>_<io_mode>_n{NODES}_N{RPN}_buff{B}.log
+# Current adios2 pattern: adios[2]_<engine>_<sst_mode>_<data_plane>_<io_mode>[_<device>]_n{NODES}_N{RPN}_buff{B}.log
 # N is now ranks-per-node (same convention as MPI). sst_mode/data_plane always
-# present; io_mode required.
+# present; io_mode required. device optional and lives before the '_n' block.
 ADIOS2_FNAME = re.compile(
     r"^adios2?_"
     r"(?P<engine>[a-z0-9]+)"
     r"_(?P<sst_mode>sync|async)"
     r"_(?P<data_plane>[A-Za-z0-9]+)"
     r"_(?P<io_mode>[a-z0-9]+)"
+    r"(?:_(?P<device>gpu|cpu))?"
     r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$"
 )
-# Dragon queue pattern: dragonq_<deployment>_n{NODES}_N{RPN}_buff{B}.log
+# Dragon queue pattern: dragonq_<deployment>_n{NODES}_N{RPN}[_<device>]_buff{B}.log
 # All output goes to stdout captured by `tee`, so single-file naming like MPI/ADIOS2.
 DRAGONQ_FNAME = re.compile(
     r"^dragonq_(?P<deployment>[a-z]+)"
-    r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$"
+    r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)"
+    r"(?:_(?P<device>gpu|cpu))?"
+    r"_buff(?P<bytes>\d+)\.log$"
 )
 # Experiment-directory pattern used by SmartSim and Dragon runs. The metadata
 # lives in the directory name; producer.out / consumer.out inside hold the
 # per-side metrics. Current format encodes both component-node count and DB
 # node count: 'n<COMPONENT_NODES>d<DB_NODES>'. Legacy format has just 'n<TOTAL>'.
+# Optional `_<device>` sits between the `d<DB_NODES>` block and `_N<rpn>`.
 EXPDIR_NAME = re.compile(
     r"^(?P<framework>ssim|dragon)_(?P<deployment>[a-z]+)"
     r"_n(?P<nodes>\d+)(?:d(?P<db_nodes>\d+))?"
+    r"(?:_(?P<device>gpu|cpu))?"
     r"_N(?P<rpn>\d+)_buff(?P<bytes>\d+)$"
 )
 
@@ -94,6 +107,7 @@ def parse_filename(name):
             "ranks": nodes * rpn,
             "ranks_per_node": rpn,
             "bytes_per_rank": nbytes,
+            "device": m.group("device"),
         }
     m = MPI_FNAME_LEGACY.match(name)
     if m:
@@ -106,6 +120,7 @@ def parse_filename(name):
             "ranks": ranks,
             "ranks_per_node": ranks // nodes,
             "bytes_per_rank": nbytes,
+            "device": None,
         }
     m = ADIOS2_FNAME.match(name)
     if m:
@@ -125,6 +140,7 @@ def parse_filename(name):
             "ranks": nodes * rpn,
             "ranks_per_node": rpn,
             "bytes_per_rank": int(m.group("bytes")),
+            "device": m.group("device"),
         }
     m = DRAGONQ_FNAME.match(name)
     if m:
@@ -139,6 +155,7 @@ def parse_filename(name):
             "ranks": nodes * rpn,
             "ranks_per_node": rpn,
             "bytes_per_rank": int(m.group("bytes")),
+            "device": m.group("device"),
         }
     return None
 
@@ -208,6 +225,7 @@ def scan_expdir(exp_dir):
         "ranks": nodes * rpn,
         "ranks_per_node": rpn,
         "bytes_per_rank": nbytes,
+        "device": m.group("device"),
     }
 
     records = []
@@ -420,22 +438,29 @@ def bw_ylabel(metric):
     return METRIC_YLABEL[metric]
 
 
-def plot_series(ax, records, x_key, metric, impls, impl_style, nic_bw):
+def plot_series(ax, records, x_key, metric, impls, impl_style, nic_bw, dup_reduce="mean"):
     """Draw one axes: lines per impl, x = x_key, y = BW.
 
     impl_style maps impl -> (color, linestyle) so every subplot uses the same
     color for the same implementation. When x_key == "bytes_per_rank" the values
     are converted to GB (bytes/1e9) so the units match the y-axis (GB/s).
+
+    When multiple records share the same (impl, x) -- e.g. the same config was
+    re-run into a new logs_JOBID/ dir -- they are collapsed to a single y by
+    ``dup_reduce``: "mean" averages them, "max" keeps the largest value.
     """
     col = bw_column(metric)
     x_scale = 1e9 if x_key == "bytes_per_rank" else 1
+    reduce_fn = max if dup_reduce == "max" else (lambda vs: sum(vs) / len(vs))
     for impl in sorted(impls):
-        pts = sorted(
-            [(r[x_key], r[col]) for r in records if r["impl"] == impl and r[col] is not None],
-            key=lambda p: p[0],
-        )
-        if not pts:
+        by_x = defaultdict(list)
+        for r in records:
+            if r["impl"] != impl or r[col] is None:
+                continue
+            by_x[r[x_key]].append(r[col])
+        if not by_x:
             continue
+        pts = sorted((x, reduce_fn(ys)) for x, ys in by_x.items())
         xs, ys = zip(*pts)
         xs = tuple(x / x_scale for x in xs)
         color, linestyle = impl_style[impl]
@@ -553,7 +578,8 @@ def make_plots(records, args, filters):
     fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
 
     for ax, (facet_val, panel_records), panel_nic in zip(axes[0], panels, panel_nics):
-        plot_series(ax, panel_records, x_key, args.metric, impls, impl_style, panel_nic)
+        plot_series(ax, panel_records, x_key, args.metric, impls, impl_style, panel_nic,
+                    dup_reduce=args.dup_reduce)
         if facet_key is not None:
             ax.set_title(panel_title(facet_key, facet_val))
         if x_key == "bytes_per_rank":
@@ -597,6 +623,15 @@ def main():
     p.add_argument("--ranks-per-node", default="all", help="comma-separated ranks-per-node, or 'all'")
     p.add_argument("--data-size", default="all", help="comma-separated bytes-per-rank values, or 'all'")
     p.add_argument("--impl", default="all", help="comma-separated implementations (mpi, adios2_bp5, adios2_sst_sync_rdma, ...), or 'all'")
+    p.add_argument("--device", default="gpu",
+                   help="producer buffer location tag baked into log/dir names by the "
+                        "submit scripts. Comma-separated (e.g. 'gpu,cpu'), or 'all' to "
+                        "include every device (and legacy logs with no device tag). "
+                        "Default: gpu.")
+    p.add_argument("--dup-reduce", choices=["mean", "max"], default="mean",
+                   help="how to collapse multiple records that share the same "
+                        "(impl, x-value) into a single plotted point: 'mean' averages "
+                        "them (default), 'max' keeps the largest value.")
     p.add_argument("--metric",
                    choices=["per_rank", "aggregate_wall", "aggregate_sum", "aggregate_max"],
                    default="per_rank",
@@ -634,16 +669,19 @@ def main():
     all_rpns = {r["ranks_per_node"] for r in records}
     all_sizes = {r["bytes_per_rank"] for r in records}
     all_impls = {r["impl"] for r in records}
+    all_devices = {r.get("device") for r in records}
 
     node_filter, node_explicit = parse_filter(args.nodes, all_nodes)
     rpn_filter, rpn_explicit = parse_filter(args.ranks_per_node, all_rpns)
     size_filter, size_explicit = parse_filter(args.data_size, all_sizes)
     impl_filter, impl_explicit = parse_impl_filter(args.impl, all_impls)
+    device_filter, device_explicit = parse_filter(args.device, all_devices)
 
     records = apply_filter(records, "nodes", node_filter)
     records = apply_filter(records, "ranks_per_node", rpn_filter)
     records = apply_filter(records, "bytes_per_rank", size_filter)
     records = apply_filter(records, "impl", impl_filter)
+    records = apply_filter(records, "device", device_filter)
 
     filters = {
         "nodes": (node_filter, node_explicit),
