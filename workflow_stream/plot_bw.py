@@ -683,6 +683,17 @@ def main():
     records = apply_filter(records, "impl", impl_filter)
     records = apply_filter(records, "device", device_filter)
 
+    # If the surviving records cover more than one device (either because the user
+    # asked for multiple explicitly, or because 'all'/'gpu,cpu' let both through),
+    # fold the device into the impl key so a gpu run and a cpu run at the same
+    # (impl, x) don't get collapsed into a single averaged point by plot_series.
+    kept_devices = {r.get("device") for r in records}
+    if len(kept_devices) > 1:
+        for r in records:
+            dev = r.get("device")
+            if dev is not None:
+                r["impl"] = f"{r['impl']}_{dev}"
+
     filters = {
         "nodes": (node_filter, node_explicit),
         "ranks_per_node": (rpn_filter, rpn_explicit),
