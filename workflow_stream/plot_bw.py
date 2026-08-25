@@ -43,7 +43,7 @@ import matplotlib.pyplot as plt
 # Legacy (mpi_test_...) had N as total ranks; still parsed for backward compatibility.
 MPI_FNAME = re.compile(
     r"^mpi_n(?P<nodes>\d+)_N(?P<rpn>\d+)"
-    r"(?:_(?P<device>gpu|cpu))?"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
     r"_buff(?P<bytes>\d+)\.log$"
 )
 MPI_FNAME_LEGACY = re.compile(r"^mpi_test_n(?P<nodes>\d+)_N(?P<ranks>\d+)_buff(?P<bytes>\d+)\.log$")
@@ -56,7 +56,7 @@ ADIOS2_FNAME = re.compile(
     r"_(?P<sst_mode>sync|async)"
     r"_(?P<data_plane>[A-Za-z0-9]+)"
     r"_(?P<io_mode>[a-z0-9]+)"
-    r"(?:_(?P<device>gpu|cpu))?"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
     r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$"
 )
 # Dragon queue pattern: dragonq_<deployment>_n{NODES}_N{RPN}[_<device>]_buff{B}.log
@@ -64,7 +64,7 @@ ADIOS2_FNAME = re.compile(
 DRAGONQ_FNAME = re.compile(
     r"^dragonq_(?P<deployment>[a-z]+)"
     r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)"
-    r"(?:_(?P<device>gpu|cpu))?"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
     r"_buff(?P<bytes>\d+)\.log$"
 )
 # Experiment-directory pattern used by SmartSim and Dragon runs. The metadata
@@ -75,7 +75,7 @@ DRAGONQ_FNAME = re.compile(
 EXPDIR_NAME = re.compile(
     r"^(?P<framework>ssim|dragon)_(?P<deployment>[a-z]+)"
     r"_n(?P<nodes>\d+)(?:d(?P<db_nodes>\d+))?"
-    r"(?:_(?P<device>gpu|cpu))?"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
     r"_N(?P<rpn>\d+)_buff(?P<bytes>\d+)$"
 )
 

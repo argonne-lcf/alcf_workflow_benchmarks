@@ -29,8 +29,10 @@ int main(int argc, char *argv[])
 
     // Read input
     if (argc < 2 || argc > 3) {
-        std::cerr << "Usage: " << argv[0] << " <bytes_per_rank> [device: gpu|cpu]" << std::endl;
-        std::cerr << "  device defaults to gpu; producer and consumer buffers both live on the chosen device" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <bytes_per_rank> [device: gpu|cpu|staged_gpu]" << std::endl;
+        std::cerr << "  device defaults to gpu; producer and consumer buffers both live on the chosen device." << std::endl;
+        std::cerr << "  staged_gpu: compute happens on GPU device memory, but each rank copies to/from a host" << std::endl;
+        std::cerr << "              staging buffer around MPI so only host pointers cross MPI (no GPU-aware MPI)." << std::endl;
         MPI_Finalize();
         return -1;
     }
@@ -45,13 +47,14 @@ int main(int argc, char *argv[])
     long long int N = bytes_per_rank / sizeof(double);
 
     std::string device = (argc == 3) ? std::string(argv[2]) : std::string("gpu");
-    if (device != "gpu" && device != "cpu") {
+    if (device != "gpu" && device != "cpu" && device != "staged_gpu") {
         if (rank == 0) {
-            std::cerr << "device must be 'gpu' or 'cpu', got '" << device << "'" << std::endl;
+            std::cerr << "device must be 'gpu', 'cpu', or 'staged_gpu', got '" << device << "'" << std::endl;
         }
         MPI_Abort(comm, 1);
     }
-    bool on_gpu = (device == "gpu");
+    bool on_gpu = (device == "gpu" || device == "staged_gpu");
+    bool staged = (device == "staged_gpu");
 
     if (rank == 0) {
         std::cout << "Running with " << size << " MPI ranks and "
@@ -63,7 +66,7 @@ int main(int argc, char *argv[])
     // Define size of data
     int half_size = size / 2;
 
-    // SYCL queue is only used when buffers live on the GPU
+    // SYCL queue is only used when buffers live on the GPU (gpu or staged_gpu)
     // Round-robin across the local node's GPUs
     sycl::queue Q;
     if (on_gpu) {
@@ -91,15 +94,15 @@ int main(int argc, char *argv[])
     // Allocate buffers on the chosen device
     std::vector<double> U_host;
     double *U_gpu = nullptr;
-    double *U = nullptr;
+    double *U_mpi = nullptr;
     if (on_gpu) {
         U_gpu = sycl::malloc_device<double>(N, Q);
         Q.memset(U_gpu, 0, N * sizeof(double)).wait();
-        U = U_gpu;
-    } else {
-        U_host.assign(N, 0.0);
-        U = U_host.data();
     }
+    if (!on_gpu || staged) {
+        U_host.assign(N, 0.0);
+    }
+    U_mpi = staged ? U_host.data() : (on_gpu ? U_gpu : U_host.data());
 
     // Setup iteration loop
     int iters = 20;
@@ -111,15 +114,13 @@ int main(int argc, char *argv[])
             std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
             double frac = (iter != 0) ? (1.0 / iter) : 0.0;
             if (on_gpu) {
-                double *U_ptr = U;
-                long long int N_local = N;
-                Q.parallel_for(sycl::range<1>(N_local), [=](sycl::id<1> idx) {
+                Q.parallel_for(sycl::range<1>(N), [=](sycl::id<1> idx) {
                     long long int n = static_cast<long long int>(idx[0]);
-                    U_ptr[n] = static_cast<double>(n) + frac;
+                    U_gpu[n] = static_cast<double>(n) + frac;
                 }).wait();
             } else {
                 for (long long int n=0; n<N; n++) {
-                    U[n] = static_cast<double>(n) + frac;
+                    U_host[n] = static_cast<double>(n) + frac;
                 }
             }
         }
@@ -131,7 +132,10 @@ int main(int argc, char *argv[])
         if (rank < half_size) {
             int dest_rank = rank + half_size;
             double start_time = MPI_Wtime();
-            MPI_Send(U, N, MPI_DOUBLE, dest_rank, 0, comm);
+            if (staged) {
+                Q.memcpy(U_mpi, U_gpu, N * sizeof(double)).wait();
+            }
+            MPI_Send(U_mpi, N, MPI_DOUBLE, dest_rank, 0, comm);
             double end_time = MPI_Wtime();
             if (iter > 0) {
                 send_time += end_time - start_time;
@@ -139,7 +143,10 @@ int main(int argc, char *argv[])
         } else {
             int src_rank = rank - half_size;
             double start_time = MPI_Wtime();
-            MPI_Recv(U, N, MPI_DOUBLE, src_rank, 0, comm, &status);
+            MPI_Recv(U_mpi, N, MPI_DOUBLE, src_rank, 0, comm, &status);
+            if (staged) {
+                Q.memcpy(U_gpu, U_mpi, N * sizeof(double)).wait();
+            }
             double end_time = MPI_Wtime();
             if (iter > 0) {
                 recv_time += end_time - start_time;

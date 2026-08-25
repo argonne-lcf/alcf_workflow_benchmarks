@@ -6,7 +6,7 @@
 #PBS -l walltime=00:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
-#PBS -q debug
+#PBS -q debug-scaling
 #PBS -k doe
 #PBS -j oe
 
@@ -40,7 +40,7 @@ CPU_BIND_MAP[8]="list:1:8:16:24:53:60:68:76"
 CPU_BIND_MAP[12]="list:1:8:16:24:32:40:53:60:68:76:84:92"
 
 # Run
-PRODUCER_DEVICE="gpu" # gpu/cpu
+PRODUCER_DEVICE="staged_gpu" # gpu/cpu/staged_gpu
 for RANKS_PER_NODE in 1 8 12
 do
   RANKS=$(( NODES * RANKS_PER_NODE ))
