@@ -184,8 +184,10 @@ int main(int argc, char *argv[])
         }
         int local_idx = rank % static_cast<int>(gpu_devices.size());
         Q = sycl::queue(gpu_devices[local_idx]);
-        log_line("[Sim] SYCL device (%d/%zu): %s", local_idx, gpu_devices.size(),
+        if (size < 50) {
+            log_line("[Sim] SYCL device (%d/%zu): %s", local_idx, gpu_devices.size(),
                  Q.get_device().get_info<sycl::info::device::name>().c_str());
+        }
     }
 
     // Attach to the Distributed Dictionary created on the Python side

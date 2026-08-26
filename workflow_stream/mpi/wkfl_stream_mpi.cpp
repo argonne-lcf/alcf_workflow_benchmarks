@@ -86,9 +86,11 @@ int main(int argc, char *argv[])
         int local_idx = rank % static_cast<int>(gpu_devices.size());
         sycl::device selected_device = gpu_devices[local_idx];
         Q = sycl::queue(selected_device);
-        std::cout << "[rank " << rank << "] SYCL device (" << local_idx
+        if (size < 100) {
+            std::cout << "[rank " << rank << "] SYCL device (" << local_idx
                   << "/" << gpu_devices.size() << "): "
                   << Q.get_device().get_info<sycl::info::device::name>() << std::endl;
+        }
     }
 
     // Allocate buffers on the chosen device

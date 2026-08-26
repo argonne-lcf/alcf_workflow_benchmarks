@@ -105,9 +105,11 @@ int main(int argc, char *argv[])
         }
         int local_idx = rank % static_cast<int>(gpu_devices.size());
         Q = sycl::queue(gpu_devices[local_idx]);
-        std::cout << "[Sim] [rank " << rank << "] SYCL device (" << local_idx
+        if (size < 50) {
+            std::cout << "[Sim] [rank " << rank << "] SYCL device (" << local_idx
                   << "/" << gpu_devices.size() << "): "
                   << Q.get_device().get_info<sycl::info::device::name>() << std::endl;
+        }
     }
 
     // Initialize SmartRedis client

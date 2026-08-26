@@ -557,9 +557,12 @@ def make_plots(records, args, filters):
     else:
         panels = [(v, [r for r in records if r[facet_key] == v]) for v in facet_values]
 
-    # Validate --nic-bw length against the facet.
+    # Validate --nic-bw length against the facet. --nic-bw is optional now; when
+    # omitted we just don't draw the reference line in any panel.
     n_panels = len(panels)
-    if len(args.nic_bw) == 1:
+    if args.nic_bw is None:
+        panel_nics = [None] * n_panels
+    elif len(args.nic_bw) == 1:
         panel_nics = args.nic_bw * n_panels
     elif len(args.nic_bw) == n_panels:
         panel_nics = args.nic_bw
@@ -576,6 +579,12 @@ def make_plots(records, args, filters):
         return 1
 
     fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
+
+    # When plotting scaling curves (x = nodes) at a pinned data size, put the size
+    # in the figure title so the reader knows what message size the curves are for.
+    if x_key == "nodes" and size_values is not None and len(size_values) == 1:
+        gb = size_values[0] / 1e9
+        fig.suptitle(f"Data size: {gb:g} GB per rank")
 
     for ax, (facet_val, panel_records), panel_nic in zip(axes[0], panels, panel_nics):
         plot_series(ax, panel_records, x_key, args.metric, impls, impl_style, panel_nic,
@@ -637,25 +646,27 @@ def main():
                    default="per_rank",
                    help="which BW to plot: per_rank | aggregate_wall (bytes/wall-clock, producer-side) "
                         "| aggregate_sum (sum of per-rank rates) | aggregate_max (bytes/max-time, consumer-side)")
-    p.add_argument("--nic-bw", type=str, required=True,
-                   help="Comma-separated NIC BW ceiling(s) in GB/s to draw as a horizontal "
-                        "reference line, one per subplot. Pass a single value to reuse across "
-                        "all panels; when faceting by ranks_per_node, pass one value per rpn "
-                        "(order-matched to the sorted rpn list). Give the aggregate value you "
-                        "actually expect for that rpn (i.e. account for however many NICs that "
-                        "rpn saturates), not the per-NIC ceiling.")
+    p.add_argument("--nic-bw", type=str, default=None,
+                   help="Optional comma-separated NIC BW ceiling(s) in GB/s to draw as a "
+                        "horizontal reference line, one per subplot. Pass a single value "
+                        "to reuse across all panels; when faceting by ranks_per_node, pass "
+                        "one value per rpn (order-matched to the sorted rpn list). Give the "
+                        "aggregate value you actually expect for that rpn (i.e. account for "
+                        "however many NICs that rpn saturates), not the per-NIC ceiling. "
+                        "Mostly useful for fixed-node comparisons; omit for scaling plots.")
     p.add_argument("--output", "-o", default="bw_plot.png", help="output PNG path")
     args = p.parse_args()
 
-    # Parse comma-separated --nic-bw into a list of floats
-    try:
-        args.nic_bw = [float(x.strip()) for x in args.nic_bw.split(",") if x.strip()]
-    except ValueError as e:
-        print(f"ERROR: --nic-bw must be a comma-separated list of numbers ({e})", file=sys.stderr)
-        return 1
-    if not args.nic_bw:
-        print("ERROR: --nic-bw must have at least one value", file=sys.stderr)
-        return 1
+    # Parse comma-separated --nic-bw into a list of floats (None if omitted).
+    if args.nic_bw is not None:
+        try:
+            args.nic_bw = [float(x.strip()) for x in args.nic_bw.split(",") if x.strip()]
+        except ValueError as e:
+            print(f"ERROR: --nic-bw must be a comma-separated list of numbers ({e})", file=sys.stderr)
+            return 1
+        if not args.nic_bw:
+            print("ERROR: --nic-bw must have at least one value", file=sys.stderr)
+            return 1
 
     records = scan_logs(args.log_dir)
     if not records:
