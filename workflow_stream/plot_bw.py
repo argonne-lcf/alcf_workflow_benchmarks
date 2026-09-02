@@ -492,12 +492,12 @@ def build_impl_style(impls):
 
 
 # Facet axis chosen in this priority order: whatever the user gave a multi-item list for.
-# Falls back to any dimension that happens to have multiple unique values in the data.
+# Impls are never a facet -- multiple impls always render as separate curves in the same
+# panel, per the plot_series contract.
 FACET_PRIORITY = [
     ("nodes", "nodes", "Nodes"),
     ("ranks_per_node", "ranks_per_node", "Ranks per Node"),
     ("bytes_per_rank", "bytes_per_rank", "Data Size"),
-    ("impl", "impl", "Implementation"),
 ]
 
 
@@ -584,7 +584,7 @@ def make_plots(records, args, filters):
     # in the figure title so the reader knows what message size the curves are for.
     if x_key == "nodes" and size_values is not None and len(size_values) == 1:
         gb = size_values[0] / 1e9
-        fig.suptitle(f"Data size: {gb:g} GB per rank")
+        fig.suptitle(f"Data size: {gb:.2f} GB per rank")
 
     for ax, (facet_val, panel_records), panel_nic in zip(axes[0], panels, panel_nics):
         plot_series(ax, panel_records, x_key, args.metric, impls, impl_style, panel_nic,

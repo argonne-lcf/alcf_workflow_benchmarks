@@ -88,9 +88,6 @@ try:
     for step in range(workflow_steps):
         sleep(2)
 
-        # Bracket the read with barriers so tic_wrap..toc_wrap is the wall-clock
-        # time for ALL ranks to finish reading (defines the transfer window for
-        # the aggregate wall-clock BW). tic..toc is still just this rank's read.
         comm.Barrier()
         tic_wrap = MPI.Wtime()
         tic = MPI.Wtime()
@@ -119,7 +116,6 @@ finally:
     # Always signal producer to quit, even if the read loop threw
     try:
         if rank % local_size == 0:
-            # C++ side expects a 1-element float64 vector; nonzero = keep going, 0 = quit
             arrMLrun = np.zeros((1,), dtype=np.float64)
             dd["check-run"] = arrMLrun
         comm.Barrier()

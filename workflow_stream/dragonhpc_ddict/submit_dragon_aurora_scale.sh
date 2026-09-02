@@ -1,12 +1,12 @@
 #!/bin/bash -l
 #PBS -S /bin/bash
 #PBS -N dragon_workflow_stream
-#PBS -l select=2048
+#PBS -l select=64
 #PBS -l place=scatter:group=tier0
 #PBS -l walltime=0:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
-#PBS -q prod
+#PBS -q debug-scaling
 #PBS -k doe
 #PBS -j oe
 
@@ -38,7 +38,7 @@ export DRAGON_DEFAULT_SEG_SZ=$((32 * 1024**3)) # increase default pool size
 
 # Run
 DEPLOYMENT=clustered
-DDICT_NODES=64
+DDICT_NODES=2
 DDICT_MEM=400         # DDict memory per node in GB
 DEVICE="gpu"          # gpu/cpu (producer buffer location)
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6

@@ -19,7 +19,7 @@ rank = comm.Get_rank()
 local_rank = int(os.getenv("PALS_LOCAL_RANKID", "0"))
 local_size = int(os.getenv("PALS_LOCAL_SIZE", "1"))
 host_name = MPI.Get_processor_name()
-if size < 1000:
+if size < 50:
     print(f"[ML] Hello from rank {rank}/{size} on {host_name} (local {local_rank}/{local_size})", flush=True)
 if rank == 0:
     print(f"[ML] Running with {size} MPI ranks (db_nodes={args.db_nodes})", flush=True)

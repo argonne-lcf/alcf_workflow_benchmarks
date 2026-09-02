@@ -59,19 +59,36 @@ details.
 
 ## Results
 
-### Minimal Clustered Runs on Aurora
+### Minimal Clustered Runs on ALCF Aurora
 
 The following results show the performance of the workflow tools in their minimal configuration for a clustered run. For streaming and staging through the parallel file system, this means 2 nodes, for in-memory staging, this means 3 nodes where one node is dedicated to the staging component (e.g., Redis DB or Dragon DDict).
 
 Using CPU buffers in the producer.
 
 <p align="center">
-  <img src="./utils/bw_plot_min_cpu.png" alt="ADIOS2 BP5 and SST streaming" width="900"/>
+  <img src="./utils/bw_plot_min_cpu.png" alt="Aurora clustered with CPU buffers" width="900"/>
 </p>
 
 Using GPU buffers in the producer.
 
 <p align="center">
-  <img src="./utils/bw_plot_min_gpu.png" alt="ADIOS2 BP5 and SST streaming" width="900"/>
+  <img src="./utils/bw_plot_min_gpu.png" alt="Aurora clustered with GPU buffers" width="900"/>
 </p>
+
+<!-- Generated with python plot_bw.py --nodes 2 --metric aggregate_wall --nic-bw 25,200,200 --ranks-per-node 1,8,12 -->
+
+Results obtained on 09/01/2026 using ADIOS2 2.11.0, SmartSim/SmartRedis `develop` branches, DragonHPC 0.14.0.
+
+### Scaling Clustered Runs on ALCF Aurora
+
+The following results show the performance of the workflow tools in their clustered configuration as the number of nodes are scaled up. The experiments are weak-scaling tests, where the buffer size per rank is kept constant but the number of ranks (12 per node) increases linearly. For the SmartSim and DragonHPC+DDict implementations using in-memory staging, the number of nodes assigned to data staging is also increased linearly with the number of nodes. GPU buffers were used for the producer.
+
+<p align="center">
+  <img src="./utils/bw_plot_scale_gpu.png" alt="Aurora clustered scaling" width="900"/>
+</p>
+
+<!-- Generated with python plot_bw.py --nodes 56,112,124,128,224,248,256,512,1024,2048 --impl mpi,adios2_sst_sync_rdma_consumer,ssim_clustered_consumer,ssim_clustered_producer,dragon_clustered_consumer,dragon_clustered_producer --metric aggregate_wall --device gpu,staged_gpu --ranks-per-node 12 --data-size 268435456 -->
+
+Results obtained on 09/01/2026 using ADIOS2 2.11.0, SmartSim/SmartRedis `develop` branches, DragonHPC 0.14.0.
+
 

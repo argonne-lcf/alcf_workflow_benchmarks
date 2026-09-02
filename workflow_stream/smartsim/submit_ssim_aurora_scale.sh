@@ -40,7 +40,7 @@ export SR_LOG_LEVEL=QUIET
 
 # Run
 DEPLOYMENT=clustered
-DB_NODES=8
+DB_NODES=32
 DEVICE="gpu" # gpu/cpu 
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
 
