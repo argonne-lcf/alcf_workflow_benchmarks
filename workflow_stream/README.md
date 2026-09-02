@@ -81,7 +81,7 @@ Results obtained on 09/01/2026 using ADIOS2 2.11.0, SmartSim/SmartRedis `develop
 
 ### Scaling Clustered Runs on ALCF Aurora
 
-The following results show the performance of the workflow tools in their clustered configuration as the number of nodes are scaled up. The experiments are weak-scaling tests, where the buffer size per rank is kept constant but the number of ranks (12 per node) increases linearly. For the SmartSim and DragonHPC+DDict implementations using in-memory staging, the number of nodes assigned to data staging is also increased linearly with the number of nodes. GPU buffers were used for the producer.
+The following results show the performance of the workflow tools in their clustered configuration as the number of nodes are scaled up. The experiments are weak-scaling tests, where the buffer size per rank is kept constant but the number of ranks (12 per node) increases linearly. For the SmartSim and DragonHPC+DDict implementations using in-memory staging, the number of nodes assigned to data staging is also increased linearly with the number of nodes (starting with 8 staging nodes and 56 nodes split equally between producer and consumer). GPU buffers were used for the producer.
 
 <p align="center">
   <img src="./utils/bw_plot_scale_gpu.png" alt="Aurora clustered scaling" width="900"/>

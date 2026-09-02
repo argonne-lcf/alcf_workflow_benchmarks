@@ -239,7 +239,7 @@ def main():
     dd_serialized = dd.serialize()
 
     # Launch the workflow
-    print(f"Running with the {args.deployment} deployment \n")
+    print(f"Running with the {args.deployment} deployment \n", flush=True)
     launch_workflow(args, dd_serialized, ddict_nodelist, sim_nodelist, ml_nodelist, exp_dir)
 
     # Close the DDict and quit
