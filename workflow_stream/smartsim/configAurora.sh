@@ -16,8 +16,8 @@ if [ ! -f "$SMARTREDIS_INSTALL_DIR/lib64/libsmartredis.so" ]; then
     exit 1
 fi
 
-# Build producer.cpp
-mpicxx -O3 -std=c++17 \
+# Build producer.cpp (with SYCL for GPU-resident producer buffers)
+mpicxx -O3 -std=c++17 -fsycl \
   -I"$SMARTREDIS_INSTALL_DIR/include" \
   producer.cpp \
   -L"$SMARTREDIS_INSTALL_DIR/lib64" -Wl,-rpath,"$SMARTREDIS_INSTALL_DIR/lib64" \

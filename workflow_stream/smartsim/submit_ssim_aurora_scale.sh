@@ -1,12 +1,12 @@
 #!/bin/bash -l
 #PBS -S /bin/bash
 #PBS -N ssim_workflow_stream
-#PBS -l select=3
-#PBS -l place=scatter:group=tier1
+#PBS -l select=256
+#PBS -l place=scatter:group=tier0
 #PBS -l walltime=0:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
-#PBS -q debug-scaling
+#PBS -q prod
 #PBS -k doe
 #PBS -j oe
 
@@ -40,7 +40,8 @@ export SR_LOG_LEVEL=QUIET
 
 # Run
 DEPLOYMENT=clustered
-DB_NODES=1
+DB_NODES=32
+DEVICE="gpu" # gpu/cpu 
 COLOCATED_MAX_PPN=6   # colocated bindings in driver.py only go up to ppn=6
 
 # For clustered, DB takes DB_NODES nodes; producer + consumer share the rest.
@@ -51,21 +52,11 @@ else
     COMPONENT_NODES=$NODES
 fi
 
-for RANKS_PER_NODE in 1 8 12
-do
-  if [ "$DEPLOYMENT" = "colocated" ] && [ "$RANKS_PER_NODE" -gt "$COLOCATED_MAX_PPN" ]; then
-    echo "Skipping ppn=$RANKS_PER_NODE for colocated deployment (max is $COLOCATED_MAX_PPN)"
-    continue
-  fi
-
-  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 #1073741824 4294967296
-  do
-    # Exp name encodes component-node count (matches MPI/ADIOS2 'n') and DB nodes as 'd'.
-    EXP_NAME="${LOG_DIR}/ssim_${DEPLOYMENT}_n${COMPONENT_NODES}d${DB_NODES}_N${RANKS_PER_NODE}_buff${BYTES}"
-    python $DRIVER --name $EXP_NAME \
-      --deployment $DEPLOYMENT \
-      --db_nodes $DB_NODES \
-      --ppn $RANKS_PER_NODE \
-      --producer_args $BYTES $DB_NODES
-  done
-done
+RANKS_PER_NODE=12
+BYTES=268435456
+EXP_NAME="${LOG_DIR}/ssim_${DEPLOYMENT}_n${COMPONENT_NODES}d${DB_NODES}_${DEVICE}_N${RANKS_PER_NODE}_buff${BYTES}"
+python $DRIVER --name $EXP_NAME \
+  --deployment $DEPLOYMENT \
+  --db_nodes $DB_NODES \
+  --ppn $RANKS_PER_NODE \
+  --producer_args $BYTES $DB_NODES $DEVICE

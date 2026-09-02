@@ -1,12 +1,12 @@
 #!/bin/bash -l
 #PBS -S /bin/bash
 #PBS -N mpi_workflow_stream
-#PBS -l select=2
-#PBS -l place=scatter:group=tier1
+#PBS -l select=256
+#PBS -l place=scatter:group=tier0
 #PBS -l walltime=00:30:00
 #PBS -l filesystems=home:flare
 #PBS -A datascience
-#PBS -q debug-scaling
+#PBS -q prod
 #PBS -k doe
 #PBS -j oe
 
@@ -29,6 +29,8 @@ module load frameworks
 module list
 
 # env variables
+export MPIR_CVAR_ENABLE_GPU=1
+export MPICH_GPU_SUPPORT_ENABLED=1
 
 # Define bindings
 declare -A CPU_BIND_MAP
@@ -38,16 +40,12 @@ CPU_BIND_MAP[8]="list:1:8:16:24:53:60:68:76"
 CPU_BIND_MAP[12]="list:1:8:16:24:32:40:53:60:68:76:84:92"
 
 # Run
-for RANKS_PER_NODE in 1 8 12
-do
-  RANKS=$(( NODES * RANKS_PER_NODE ))
-  CPU_BIND=${CPU_BIND_MAP[$RANKS_PER_NODE]}
-  for BYTES in 262144 1048576 4194304 16777216 67108864 268435456 1073741824 4294967296
-  do
-    mpiexec -np $RANKS --ppn $RANKS_PER_NODE \
-      --cpu-bind $CPU_BIND \
-      numactl -m 2-3 \
-      ./wkfl_stream_mpi $BYTES 2>&1 | tee $LOG_DIR/mpi_n${NODES}_N${RANKS_PER_NODE}_buff${BYTES}.log
-  done
-done
-
+PRODUCER_DEVICE="staged_gpu" # gpu/cpu/staged_gpu
+RANKS_PER_NODE=12
+RANKS=$(( NODES * RANKS_PER_NODE ))
+CPU_BIND=${CPU_BIND_MAP[$RANKS_PER_NODE]}
+BYTES=268435456
+mpiexec -np $RANKS --ppn $RANKS_PER_NODE \
+  --cpu-bind $CPU_BIND \
+  numactl -m 2-3 \
+  ./wkfl_stream_mpi $BYTES $PRODUCER_DEVICE 2>&1 | tee $LOG_DIR/mpi_n${NODES}_N${RANKS_PER_NODE}_${PRODUCER_DEVICE}_buff${BYTES}.log

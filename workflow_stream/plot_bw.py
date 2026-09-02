@@ -35,34 +35,47 @@ import matplotlib.pyplot as plt
 
 # ---------- log parsing ----------
 
+# All patterns accept an optional `_(gpu|cpu)` tag inserted just before `_buff...`
+# by the submit scripts once producer buffer location became configurable. Older
+# logs without the tag still parse; the `device` field is None in that case.
+#
 # Current MPI pattern: N is ranks-per-node.
 # Legacy (mpi_test_...) had N as total ranks; still parsed for backward compatibility.
-MPI_FNAME = re.compile(r"^mpi_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$")
+MPI_FNAME = re.compile(
+    r"^mpi_n(?P<nodes>\d+)_N(?P<rpn>\d+)"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
+    r"_buff(?P<bytes>\d+)\.log$"
+)
 MPI_FNAME_LEGACY = re.compile(r"^mpi_test_n(?P<nodes>\d+)_N(?P<ranks>\d+)_buff(?P<bytes>\d+)\.log$")
-# Current adios2 pattern: adios[2]_<engine>_<sst_mode>_<data_plane>_<io_mode>_n{NODES}_N{RPN}_buff{B}.log
+# Current adios2 pattern: adios[2]_<engine>_<sst_mode>_<data_plane>_<io_mode>[_<device>]_n{NODES}_N{RPN}_buff{B}.log
 # N is now ranks-per-node (same convention as MPI). sst_mode/data_plane always
-# present; io_mode required.
+# present; io_mode required. device optional and lives before the '_n' block.
 ADIOS2_FNAME = re.compile(
     r"^adios2?_"
     r"(?P<engine>[a-z0-9]+)"
     r"_(?P<sst_mode>sync|async)"
     r"_(?P<data_plane>[A-Za-z0-9]+)"
     r"_(?P<io_mode>[a-z0-9]+)"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
     r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$"
 )
-# Dragon queue pattern: dragonq_<deployment>_n{NODES}_N{RPN}_buff{B}.log
+# Dragon queue pattern: dragonq_<deployment>_n{NODES}_N{RPN}[_<device>]_buff{B}.log
 # All output goes to stdout captured by `tee`, so single-file naming like MPI/ADIOS2.
 DRAGONQ_FNAME = re.compile(
     r"^dragonq_(?P<deployment>[a-z]+)"
-    r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)_buff(?P<bytes>\d+)\.log$"
+    r"_n(?P<nodes>\d+)_N(?P<rpn>\d+)"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
+    r"_buff(?P<bytes>\d+)\.log$"
 )
 # Experiment-directory pattern used by SmartSim and Dragon runs. The metadata
 # lives in the directory name; producer.out / consumer.out inside hold the
 # per-side metrics. Current format encodes both component-node count and DB
 # node count: 'n<COMPONENT_NODES>d<DB_NODES>'. Legacy format has just 'n<TOTAL>'.
+# Optional `_<device>` sits between the `d<DB_NODES>` block and `_N<rpn>`.
 EXPDIR_NAME = re.compile(
     r"^(?P<framework>ssim|dragon)_(?P<deployment>[a-z]+)"
     r"_n(?P<nodes>\d+)(?:d(?P<db_nodes>\d+))?"
+    r"(?:_(?P<device>gpu|cpu|staged_gpu))?"
     r"_N(?P<rpn>\d+)_buff(?P<bytes>\d+)$"
 )
 
@@ -94,6 +107,7 @@ def parse_filename(name):
             "ranks": nodes * rpn,
             "ranks_per_node": rpn,
             "bytes_per_rank": nbytes,
+            "device": m.group("device"),
         }
     m = MPI_FNAME_LEGACY.match(name)
     if m:
@@ -106,6 +120,7 @@ def parse_filename(name):
             "ranks": ranks,
             "ranks_per_node": ranks // nodes,
             "bytes_per_rank": nbytes,
+            "device": None,
         }
     m = ADIOS2_FNAME.match(name)
     if m:
@@ -125,6 +140,7 @@ def parse_filename(name):
             "ranks": nodes * rpn,
             "ranks_per_node": rpn,
             "bytes_per_rank": int(m.group("bytes")),
+            "device": m.group("device"),
         }
     m = DRAGONQ_FNAME.match(name)
     if m:
@@ -139,6 +155,7 @@ def parse_filename(name):
             "ranks": nodes * rpn,
             "ranks_per_node": rpn,
             "bytes_per_rank": int(m.group("bytes")),
+            "device": m.group("device"),
         }
     return None
 
@@ -208,6 +225,7 @@ def scan_expdir(exp_dir):
         "ranks": nodes * rpn,
         "ranks_per_node": rpn,
         "bytes_per_rank": nbytes,
+        "device": m.group("device"),
     }
 
     records = []
@@ -420,22 +438,29 @@ def bw_ylabel(metric):
     return METRIC_YLABEL[metric]
 
 
-def plot_series(ax, records, x_key, metric, impls, impl_style, nic_bw):
+def plot_series(ax, records, x_key, metric, impls, impl_style, nic_bw, dup_reduce="mean"):
     """Draw one axes: lines per impl, x = x_key, y = BW.
 
     impl_style maps impl -> (color, linestyle) so every subplot uses the same
     color for the same implementation. When x_key == "bytes_per_rank" the values
     are converted to GB (bytes/1e9) so the units match the y-axis (GB/s).
+
+    When multiple records share the same (impl, x) -- e.g. the same config was
+    re-run into a new logs_JOBID/ dir -- they are collapsed to a single y by
+    ``dup_reduce``: "mean" averages them, "max" keeps the largest value.
     """
     col = bw_column(metric)
     x_scale = 1e9 if x_key == "bytes_per_rank" else 1
+    reduce_fn = max if dup_reduce == "max" else (lambda vs: sum(vs) / len(vs))
     for impl in sorted(impls):
-        pts = sorted(
-            [(r[x_key], r[col]) for r in records if r["impl"] == impl and r[col] is not None],
-            key=lambda p: p[0],
-        )
-        if not pts:
+        by_x = defaultdict(list)
+        for r in records:
+            if r["impl"] != impl or r[col] is None:
+                continue
+            by_x[r[x_key]].append(r[col])
+        if not by_x:
             continue
+        pts = sorted((x, reduce_fn(ys)) for x, ys in by_x.items())
         xs, ys = zip(*pts)
         xs = tuple(x / x_scale for x in xs)
         color, linestyle = impl_style[impl]
@@ -467,12 +492,12 @@ def build_impl_style(impls):
 
 
 # Facet axis chosen in this priority order: whatever the user gave a multi-item list for.
-# Falls back to any dimension that happens to have multiple unique values in the data.
+# Impls are never a facet -- multiple impls always render as separate curves in the same
+# panel, per the plot_series contract.
 FACET_PRIORITY = [
     ("nodes", "nodes", "Nodes"),
     ("ranks_per_node", "ranks_per_node", "Ranks per Node"),
     ("bytes_per_rank", "bytes_per_rank", "Data Size"),
-    ("impl", "impl", "Implementation"),
 ]
 
 
@@ -532,9 +557,12 @@ def make_plots(records, args, filters):
     else:
         panels = [(v, [r for r in records if r[facet_key] == v]) for v in facet_values]
 
-    # Validate --nic-bw length against the facet.
+    # Validate --nic-bw length against the facet. --nic-bw is optional now; when
+    # omitted we just don't draw the reference line in any panel.
     n_panels = len(panels)
-    if len(args.nic_bw) == 1:
+    if args.nic_bw is None:
+        panel_nics = [None] * n_panels
+    elif len(args.nic_bw) == 1:
         panel_nics = args.nic_bw * n_panels
     elif len(args.nic_bw) == n_panels:
         panel_nics = args.nic_bw
@@ -552,8 +580,15 @@ def make_plots(records, args, filters):
 
     fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
 
+    # When plotting scaling curves (x = nodes) at a pinned data size, put the size
+    # in the figure title so the reader knows what message size the curves are for.
+    if x_key == "nodes" and size_values is not None and len(size_values) == 1:
+        gb = size_values[0] / 1e9
+        fig.suptitle(f"Data size: {gb:.2f} GB per rank")
+
     for ax, (facet_val, panel_records), panel_nic in zip(axes[0], panels, panel_nics):
-        plot_series(ax, panel_records, x_key, args.metric, impls, impl_style, panel_nic)
+        plot_series(ax, panel_records, x_key, args.metric, impls, impl_style, panel_nic,
+                    dup_reduce=args.dup_reduce)
         if facet_key is not None:
             ax.set_title(panel_title(facet_key, facet_val))
         if x_key == "bytes_per_rank":
@@ -597,30 +632,41 @@ def main():
     p.add_argument("--ranks-per-node", default="all", help="comma-separated ranks-per-node, or 'all'")
     p.add_argument("--data-size", default="all", help="comma-separated bytes-per-rank values, or 'all'")
     p.add_argument("--impl", default="all", help="comma-separated implementations (mpi, adios2_bp5, adios2_sst_sync_rdma, ...), or 'all'")
+    p.add_argument("--device", default="gpu",
+                   help="producer buffer location tag baked into log/dir names by the "
+                        "submit scripts. Comma-separated (e.g. 'gpu,cpu'), or 'all' to "
+                        "include every device (and legacy logs with no device tag). "
+                        "Default: gpu.")
+    p.add_argument("--dup-reduce", choices=["mean", "max"], default="mean",
+                   help="how to collapse multiple records that share the same "
+                        "(impl, x-value) into a single plotted point: 'mean' averages "
+                        "them (default), 'max' keeps the largest value.")
     p.add_argument("--metric",
                    choices=["per_rank", "aggregate_wall", "aggregate_sum", "aggregate_max"],
                    default="per_rank",
                    help="which BW to plot: per_rank | aggregate_wall (bytes/wall-clock, producer-side) "
                         "| aggregate_sum (sum of per-rank rates) | aggregate_max (bytes/max-time, consumer-side)")
-    p.add_argument("--nic-bw", type=str, required=True,
-                   help="Comma-separated NIC BW ceiling(s) in GB/s to draw as a horizontal "
-                        "reference line, one per subplot. Pass a single value to reuse across "
-                        "all panels; when faceting by ranks_per_node, pass one value per rpn "
-                        "(order-matched to the sorted rpn list). Give the aggregate value you "
-                        "actually expect for that rpn (i.e. account for however many NICs that "
-                        "rpn saturates), not the per-NIC ceiling.")
+    p.add_argument("--nic-bw", type=str, default=None,
+                   help="Optional comma-separated NIC BW ceiling(s) in GB/s to draw as a "
+                        "horizontal reference line, one per subplot. Pass a single value "
+                        "to reuse across all panels; when faceting by ranks_per_node, pass "
+                        "one value per rpn (order-matched to the sorted rpn list). Give the "
+                        "aggregate value you actually expect for that rpn (i.e. account for "
+                        "however many NICs that rpn saturates), not the per-NIC ceiling. "
+                        "Mostly useful for fixed-node comparisons; omit for scaling plots.")
     p.add_argument("--output", "-o", default="bw_plot.png", help="output PNG path")
     args = p.parse_args()
 
-    # Parse comma-separated --nic-bw into a list of floats
-    try:
-        args.nic_bw = [float(x.strip()) for x in args.nic_bw.split(",") if x.strip()]
-    except ValueError as e:
-        print(f"ERROR: --nic-bw must be a comma-separated list of numbers ({e})", file=sys.stderr)
-        return 1
-    if not args.nic_bw:
-        print("ERROR: --nic-bw must have at least one value", file=sys.stderr)
-        return 1
+    # Parse comma-separated --nic-bw into a list of floats (None if omitted).
+    if args.nic_bw is not None:
+        try:
+            args.nic_bw = [float(x.strip()) for x in args.nic_bw.split(",") if x.strip()]
+        except ValueError as e:
+            print(f"ERROR: --nic-bw must be a comma-separated list of numbers ({e})", file=sys.stderr)
+            return 1
+        if not args.nic_bw:
+            print("ERROR: --nic-bw must have at least one value", file=sys.stderr)
+            return 1
 
     records = scan_logs(args.log_dir)
     if not records:
@@ -634,16 +680,30 @@ def main():
     all_rpns = {r["ranks_per_node"] for r in records}
     all_sizes = {r["bytes_per_rank"] for r in records}
     all_impls = {r["impl"] for r in records}
+    all_devices = {r.get("device") for r in records}
 
     node_filter, node_explicit = parse_filter(args.nodes, all_nodes)
     rpn_filter, rpn_explicit = parse_filter(args.ranks_per_node, all_rpns)
     size_filter, size_explicit = parse_filter(args.data_size, all_sizes)
     impl_filter, impl_explicit = parse_impl_filter(args.impl, all_impls)
+    device_filter, device_explicit = parse_filter(args.device, all_devices)
 
     records = apply_filter(records, "nodes", node_filter)
     records = apply_filter(records, "ranks_per_node", rpn_filter)
     records = apply_filter(records, "bytes_per_rank", size_filter)
     records = apply_filter(records, "impl", impl_filter)
+    records = apply_filter(records, "device", device_filter)
+
+    # If the surviving records cover more than one device (either because the user
+    # asked for multiple explicitly, or because 'all'/'gpu,cpu' let both through),
+    # fold the device into the impl key so a gpu run and a cpu run at the same
+    # (impl, x) don't get collapsed into a single averaged point by plot_series.
+    kept_devices = {r.get("device") for r in records}
+    if len(kept_devices) > 1:
+        for r in records:
+            dev = r.get("device")
+            if dev is not None:
+                r["impl"] = f"{r['impl']}_{dev}"
 
     filters = {
         "nodes": (node_filter, node_explicit),
