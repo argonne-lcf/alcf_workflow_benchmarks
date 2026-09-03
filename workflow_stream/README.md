@@ -32,8 +32,8 @@ A diagram for the staging implementation is shown below.
 
 The benchmark has three main configuration options:
 
-- **Deployment strategy**: Producer and consumer can be *colocated* to share compute resources on the same
-  nodes or *clustered* on distinct sets of nodes. In the colocated deployment, data can be streamed/staged within each node eliminating the need for inter-node transfers. In the clustered deployment, data is forced to move across the network from producer to consumer.
+- **Deployment strategy**: Producer and consumer can be `colocated` to share compute resources on the same
+  nodes or `clustered` on distinct sets of nodes. In the colocated deployment, data can be streamed/staged within each node eliminating the need for inter-node transfers. In the clustered deployment, data is forced to move across the network from producer to consumer.
 - **Data size**: The size of the per-rank message exchanged each iteration can
   be varied to sweep from small messages to large transfers.
 - **Producer buffer location**: The producer's data buffer can live on the CPU or on the GPU (SYCL USM device memory), selectable via a `device` argument that defaults to `gpu`. The consumer buffer always lives on the CPU (mock ML reads typically keep training data on the host and only stage each batch to the GPU).

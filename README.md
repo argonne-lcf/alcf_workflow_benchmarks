@@ -7,4 +7,5 @@ Below is a summary of the benchmarks provided.
 | Benchmark | Description | Tools | Systems Supported |
 |-----------|-------------|-------|-------------------|
 | [workflow_stream](./workflow_stream) | Benckmark data streaming or staging performance for a simple producer-consumer workflow pattern. | MPI, ADIOS2, SmartSim, DragonHPC | Aurora |
+| [task_launching](./task_launching) | Benckmark task launching at scale for serial and multi-node MPI applications. | EnsembleLauncher | Aurora |
 
