@@ -6,6 +6,7 @@ from time import sleep
 from adios2 import Stream, Adios
 
 import mpi4py.rc
+mpi4py.rc.initialize = False
 mpi4py.rc.threads = True
 mpi4py.rc.thread_level = 'multiple'
 from mpi4py import MPI
